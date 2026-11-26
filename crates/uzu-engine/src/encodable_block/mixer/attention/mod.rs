@@ -3,7 +3,7 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{
-        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Context, Kernels,
         gpu_types::qkv_norm::{QKVL2Op, QKVNormParams},
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
@@ -14,7 +14,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
+        linear::{InputBasis, InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::RoPE},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -115,6 +115,7 @@ impl<B: Backend> Attention<B> {
             context,
         )
         .await?;
+        let projection = context.wrap_linear(projection, data_type);
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
@@ -209,6 +210,7 @@ impl<B: Backend> Attention<B> {
             context,
         )
         .await?;
+        let out_projection = context.wrap_linear(out_projection, data_type);
 
         Ok((
             Self {
@@ -239,9 +241,10 @@ impl<B: Backend> Attention<B> {
         hidden: B::ScratchBuffer,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<AttentionState<B>>>,
+        input_basis: InputBasis,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, AttentionEncodeError<B>> {
-        let qkvg = self.projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let qkvg = self.projection.encode_for_basis(hidden, batch_dim.size(), input_basis, command_buffer)?;
         let gate = self.has_gate.then(|| {
             qkvg.subrange(
                 (self.projection_dim - self.num_q_heads * self.head_dim) as usize * self.data_type.size_in_bytes()..,
@@ -376,6 +379,17 @@ impl<B: Backend> Attention<B> {
 }
 
 impl<B: Backend> Mixer<B> for Attention<B> {
+    fn input_basis(
+        &self,
+        batch_dim: u32,
+    ) -> crate::encodable_block::linear::InputBasis {
+        self.projection.input_basis(batch_dim)
+    }
+
+    fn supports_unrotated_input(&self) -> bool {
+        self.projection.supports_unrotated_input()
+    }
+
     fn speculation_supported(&self) -> bool {
         true
     }
@@ -399,11 +413,22 @@ impl<B: Backend> Mixer<B> for Attention<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
+        self.encode_for_basis(hidden, batch_dim, state, self.input_basis(batch_dim.size()), command_buffer)
+    }
+
+    fn encode_for_basis(
+        &self,
+        hidden: B::ScratchBuffer,
+        batch_dim: &BatchTopology<B>,
+        state: Option<MaybeMut<dyn MixerState<B>>>,
+        input_basis: InputBasis,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("attention");
 
         let state =
             state.map(|state| state.downcast::<AttentionState<B>>().expect("incorrect type of attention state"));
-        let output = self.attend(hidden, batch_dim, state, command_buffer)?;
+        let output = self.attend(hidden, batch_dim, state, input_basis, command_buffer)?;
 
         Ok(output)
     }

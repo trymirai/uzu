@@ -16,7 +16,7 @@ use crate::{
     data_type::DataType,
     encodable_block::linear::{
         InputAccess, InputPreparationMode, InputRhtParameters, Linear, LinearBlockError, LinearEncodeError,
-        LinearInput, LinearInputPreparation, LinearMatmul, OutputBasis,
+        LinearInput, LinearInputPreparation, LinearMatmul, OutputBasis, RhtW4Layer,
         input_preparation::{InputPreparation, ScalarPreparation, TrellisPreparation},
     },
     safetensors::ParameterTree,
@@ -27,6 +27,7 @@ struct Part<B: Backend> {
     rows: Range<u32>,
     preparation: InputPreparation<B>,
     rotation: Option<usize>,
+    external_input_signs: Option<Arc<B::GlobalGpuBuffer>>,
 }
 
 pub enum OutputRows<I> {
@@ -42,6 +43,7 @@ pub struct OutputStack<B: Backend> {
     data_type: DataType,
     output_dim: u32,
     output_rotation: Option<(ActivationTransform<B>, B::GlobalGpuBuffer)>,
+    stacked: bool,
 }
 
 impl<B: Backend> OutputStack<B> {
@@ -208,6 +210,11 @@ impl<B: Backend> OutputStack<B> {
                 && matches!(mode,
                     InputPreparationMode::AllowExternal { allow_quantized_activations }
                         if allow_quantized_activations || format == ActivationFormat::Bf16);
+            let external_input_rht = if use_external {
+                rht.map(|rht| rht.signs.clone())
+            } else {
+                None
+            };
             let (rht, format) = if use_external {
                 external = rht.map(|rht| LinearInputPreparation {
                     rht: InputRhtParameters {
@@ -239,6 +246,7 @@ impl<B: Backend> OutputStack<B> {
                 rows,
                 preparation,
                 rotation,
+                external_input_signs: external_input_rht,
             });
         }
         Ok((
@@ -247,6 +255,7 @@ impl<B: Backend> OutputStack<B> {
                 data_type: output_data_type,
                 output_dim,
                 output_rotation,
+                stacked,
             },
             external,
         ))
@@ -420,5 +429,31 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
             }),
             _ => ActivationFormat::Bf16,
         }
+    }
+
+    fn rht_w4<'a>(
+        &'a self,
+        fused_input_rht: Option<&'a B::GlobalGpuBuffer>,
+    ) -> Option<RhtW4Layer<'a, B>> {
+        if self.stacked || self.output_rotation.is_some() {
+            return None;
+        }
+        let [part] = &*self.parts else {
+            return None;
+        };
+        if part.rows.start != 0 || part.rows.end != self.output_dim {
+            return None;
+        }
+        let input_signs = if let Some(input_signs) = fused_input_rht {
+            input_signs
+        } else if let Some(signs) = &part.external_input_signs {
+            &**signs
+        } else {
+            let InputPreparation::Scalar(preparation) = &part.preparation else {
+                return None;
+            };
+            preparation.rht_signs()?
+        };
+        part.matrix.rht_w4(Some(input_signs))
     }
 }

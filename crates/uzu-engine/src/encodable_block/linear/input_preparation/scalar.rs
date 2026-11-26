@@ -65,6 +65,10 @@ pub struct ScalarPreparation<B: Backend> {
 }
 
 impl<B: Backend> ScalarPreparation<B> {
+    pub fn rht_signs(&self) -> Option<&B::GlobalGpuBuffer> {
+        self.rotation.as_ref().map(|(signs, _)| &**signs)
+    }
+
     pub fn requires_full_precision(&self) -> bool {
         self.rotation.is_some()
     }

@@ -157,6 +157,16 @@ pub enum ResidualConnection<B: Backend> {
     Gated(GatedResidualConnection<B>),
 }
 
+pub enum ResidualStarted<B: Backend> {
+    Additive {
+        stream: B::ScratchBuffer,
+    },
+    Gated {
+        stream: B::ScratchBuffer,
+        injection_logits: B::ScratchBuffer,
+    },
+}
+
 pub struct AdditiveResidualConnection<B: Backend> {
     model_dim: u32,
     residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel,
@@ -172,24 +182,6 @@ impl<B: Backend> AdditiveResidualConnection<B> {
             model_dim,
             residual_add: <B::Kernels as Kernels>::TensorAddScaleKernel::new(context, data_type, false, true)?,
         })
-    }
-
-    fn encode<E: From<ResidualEncodeError<B>>>(
-        &self,
-        stream: &B::ScratchBuffer,
-        row_count: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        body: impl FnOnce(
-            MaybeOwned<'_, B::ScratchBuffer>,
-            &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        ) -> Result<B::ScratchBuffer, E>,
-    ) -> Result<B::ScratchBuffer, E> {
-        let update = body(MaybeOwned::Borrowed(stream), command_buffer)?;
-
-        let mut output = command_buffer.allocate_scratch(stream.size()).map_err(ResidualEncodeError::Backend)?;
-        let elements = row_count * self.model_dim;
-        self.residual_add.encode(Some(stream), Some(&update), &mut output, elements, elements, 1.0, command_buffer);
-        Ok(output)
     }
 }
 
@@ -227,38 +219,6 @@ impl<B: Backend> GatedResidualConnection<B> {
             update,
         })
     }
-
-    fn encode<E: From<ResidualEncodeError<B>>>(
-        &self,
-        stream: &B::ScratchBuffer,
-        row_count: u32,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        sublayer_body: impl FnOnce(
-            MaybeOwned<'_, B::ScratchBuffer>,
-            &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-        ) -> Result<B::ScratchBuffer, E>,
-    ) -> Result<B::ScratchBuffer, E> {
-        let (normalized, mixed) = self.reader.encode(stream, 0, row_count, command_buffer)?;
-        let injection_logits =
-            self.injection.encode(normalized, row_count, command_buffer).map_err(ResidualEncodeError::LinearEncode)?;
-
-        let update = sublayer_body(MaybeOwned::Owned(mixed), command_buffer)?;
-
-        let mut output = command_buffer.allocate_scratch(stream.size()).map_err(ResidualEncodeError::Backend)?;
-        let model_dim = self.reader.model_dim;
-        let stream_count = self.reader.stream_count;
-        self.update.encode(
-            stream,
-            &injection_logits,
-            &update,
-            &mut output,
-            model_dim,
-            stream_count,
-            row_count * stream_count * model_dim,
-            command_buffer,
-        );
-        Ok(output)
-    }
 }
 
 impl<B: Backend> ResidualConnection<B> {
@@ -279,19 +239,98 @@ impl<B: Backend> ResidualConnection<B> {
         })
     }
 
-    pub fn encode<E: From<ResidualEncodeError<B>>>(
+    pub fn start_with_body_input<E: From<ResidualEncodeError<B>>>(
         &self,
-        stream: &B::ScratchBuffer,
+        stream: B::ScratchBuffer,
         row_count: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         body: impl FnOnce(
             MaybeOwned<'_, B::ScratchBuffer>,
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         ) -> Result<B::ScratchBuffer, E>,
-    ) -> Result<B::ScratchBuffer, E> {
+    ) -> Result<(ResidualStarted<B>, B::ScratchBuffer), E> {
         match self {
-            Self::Additive(connection) => connection.encode(stream, row_count, command_buffer, body),
-            Self::Gated(connection) => connection.encode(stream, row_count, command_buffer, body),
+            Self::Additive(_) => {
+                let update = body(MaybeOwned::Borrowed(&stream), command_buffer)?;
+                Ok((
+                    ResidualStarted::Additive {
+                        stream,
+                    },
+                    update,
+                ))
+            },
+            Self::Gated(connection) => {
+                let (normalized, mixed) =
+                    connection.reader.encode(&stream, 0, row_count, command_buffer).map_err(E::from)?;
+                let injection_logits = connection
+                    .injection
+                    .encode(normalized, row_count, command_buffer)
+                    .map_err(ResidualEncodeError::LinearEncode)
+                    .map_err(E::from)?;
+                let update = body(MaybeOwned::Owned(mixed), command_buffer)?;
+                Ok((
+                    ResidualStarted::Gated {
+                        stream,
+                        injection_logits,
+                    },
+                    update,
+                ))
+            },
+        }
+    }
+
+    pub fn finish(
+        &self,
+        started: ResidualStarted<B>,
+        update: B::ScratchBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, ResidualEncodeError<B>> {
+        match (self, started) {
+            (
+                Self::Additive(connection),
+                ResidualStarted::Additive {
+                    stream,
+                },
+            ) => {
+                let mut output =
+                    command_buffer.allocate_scratch(stream.size()).map_err(ResidualEncodeError::Backend)?;
+                let elements = row_count * connection.model_dim;
+                connection.residual_add.encode(
+                    Some(&stream),
+                    Some(&update),
+                    &mut output,
+                    elements,
+                    elements,
+                    1.0,
+                    command_buffer,
+                );
+                Ok(output)
+            },
+            (
+                Self::Gated(connection),
+                ResidualStarted::Gated {
+                    stream,
+                    injection_logits,
+                },
+            ) => {
+                let mut output =
+                    command_buffer.allocate_scratch(stream.size()).map_err(ResidualEncodeError::Backend)?;
+                let model_dim = connection.reader.model_dim;
+                let stream_count = connection.reader.stream_count;
+                connection.update.encode(
+                    &stream,
+                    &injection_logits,
+                    &update,
+                    &mut output,
+                    model_dim,
+                    stream_count,
+                    row_count * stream_count * model_dim,
+                    command_buffer,
+                );
+                Ok(output)
+            },
+            _ => unreachable!("residual start and finish kinds must match"),
         }
     }
 }

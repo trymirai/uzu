@@ -5,7 +5,9 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding},
-    config::transformer::TransformerConfig,
+    config::{
+        token_mixer::AnyTokenMixerConfig, transformer::TransformerConfig, transformer_layer::TransformerLayerConfig,
+    },
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
@@ -13,7 +15,7 @@ use crate::{
         mixer::MixerState,
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         residual::{ResidualEncodeError, ResidualHead, ResidualNewError},
-        transformer_layer::{TransformerLayer, TransformerLayerError},
+        transformer_layer::{PendingMlp, TransformerLayer, TransformerLayerError},
     },
     safetensors::ParameterTree,
     utils::maybe_mut::MaybeMut,
@@ -27,6 +29,15 @@ enum TransformerLayerStateType<B: Backend> {
 pub struct TransformerState<B: Backend> {
     layer_states: Box<[TransformerLayerStateType<B>]>,
     context_length: u32,
+}
+
+enum ChunkState<'m, B: Backend> {
+    Stream(B::ScratchBuffer),
+    MlpPending(PendingMlp<'m, B>),
+}
+
+struct Chunk<'m, B: Backend> {
+    state: Option<ChunkState<'m, B>>,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
@@ -78,6 +89,34 @@ impl<B: Backend> TransformerState<B> {
 
         Ok(())
     }
+
+    fn encode_accept_layer(
+        &mut self,
+        layer_index: u32,
+        accepted_indices: &[u32],
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), B::Error> {
+        if let TransformerLayerStateType::Owned(layer_state) = &mut self.layer_states[layer_index as usize] {
+            layer_state.encode_accept(accepted_indices, command_buffer)?;
+        }
+        Ok(())
+    }
+
+    fn layer_state(
+        &mut self,
+        layer_index: u32,
+    ) -> MaybeMut<'_, dyn MixerState<B>> {
+        match &mut self.layer_states[layer_index as usize] {
+            TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
+            TransformerLayerStateType::Shared(owned_layer_index) => {
+                let TransformerLayerStateType::Owned(owned_layer) = &self.layer_states[*owned_layer_index as usize]
+                else {
+                    panic!("shared layer doesn't point to an owned layer");
+                };
+                MaybeMut::Const(owned_layer.as_ref())
+            },
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -104,6 +143,8 @@ pub enum TransformerEncodeError<B: Backend> {
     Residual(#[from] ResidualEncodeError<B>),
     #[error("Hidden features require an additive residual")]
     HiddenFeaturesRequireAdditiveResidual,
+    #[error("prefill chunk groups support at most two chunks (got {0})")]
+    TooManyPrefillChunks(usize),
 }
 
 pub struct Transformer<B: Backend> {
@@ -111,6 +152,23 @@ pub struct Transformer<B: Backend> {
     output_norm: Option<Normalization<B>>,
     model_dim: u32,
     residual_head: ResidualHead<B>,
+    supports_layerwise_prefill_pipelining: bool,
+}
+
+fn layer_pipelines_prefill(layer_config: &TransformerLayerConfig) -> bool {
+    let mixer_pipelines = match &layer_config.mixer.body_config {
+        AnyTokenMixerConfig::DeltaNetConfig(_) => true,
+        AnyTokenMixerConfig::AttentionConfig(attention) => {
+            attention.sliding_window_size.is_none() && !attention.is_kv_sharing
+        },
+        AnyTokenMixerConfig::ShortConvConfig(_) | AnyTokenMixerConfig::SparseAttentionConfig(_) => false,
+    };
+    mixer_pipelines
+        && layer_config.kv_source_layer_index.is_none()
+        && layer_config.mixer.common.conv_config.is_none()
+        && layer_config.mlp.common.conv_config.is_none()
+        && layer_config.prologue_configs.is_empty()
+        && layer_config.epilogue_configs.is_empty()
 }
 
 impl<B: Backend> Transformer<B> {
@@ -176,6 +234,7 @@ impl<B: Backend> Transformer<B> {
             output_norm,
             model_dim: transformer_config.model_dim,
             residual_head,
+            supports_layerwise_prefill_pipelining: transformer_config.layer_configs.iter().all(layer_pipelines_prefill),
         })
     }
 
@@ -221,6 +280,10 @@ impl<B: Backend> Transformer<B> {
         self.prefill_cache_layer_count() < self.layers.len()
     }
 
+    pub fn supports_layerwise_prefill_pipelining(&self) -> bool {
+        self.supports_layerwise_prefill_pipelining
+    }
+
     pub fn create_empty_state(
         &self,
         max_context_length: Option<u32>,
@@ -248,7 +311,214 @@ impl<B: Backend> Transformer<B> {
     pub fn encode(
         &self,
         input: B::ScratchBuffer,
-        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        per_layer_inputs: Option<&B::ScratchBuffer>,
+        batch_dim: &BatchTopology<B>,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        state: Option<&mut TransformerState<B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
+        self.encode_chunks(
+            vec![input],
+            per_layer_inputs,
+            &[batch_dim],
+            output_range,
+            hidden_feature_layer_indices,
+            state,
+            command_buffer,
+        )
+    }
+
+    pub fn encode_chunks(
+        &self,
+        inputs: Vec<B::ScratchBuffer>,
+        per_layer_inputs: Option<&B::ScratchBuffer>,
+        batch_dims: &[&BatchTopology<B>],
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        state: Option<&mut TransformerState<B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
+        assert!(!inputs.is_empty(), "prefill needs at least one chunk");
+        assert_eq!(inputs.len(), batch_dims.len(), "each prefill chunk needs a batch topology");
+        if inputs.len() > 2 {
+            return Err(TransformerEncodeError::TooManyPrefillChunks(inputs.len()));
+        }
+        if inputs.len() == 1 {
+            let input = inputs.into_iter().next().unwrap();
+            return self.encode_single(
+                input,
+                per_layer_inputs,
+                batch_dims[0],
+                output_range,
+                hidden_feature_layer_indices,
+                state,
+                command_buffer,
+            );
+        }
+        assert!(self.supports_layerwise_prefill_pipelining, "this model's chunks cannot be overlapped");
+        assert!(state.is_some(), "overlapped chunks require mixer state");
+
+        if hidden_feature_layer_indices.is_some() && !matches!(self.residual_head, ResidualHead::Additive) {
+            return Err(TransformerEncodeError::HiddenFeaturesRequireAdditiveResidual);
+        }
+
+        let mut state = state;
+        let initial_context_length = state.as_ref().map_or(0, |state| state.context_length);
+        let mut context_length = initial_context_length;
+        let mut chunks = Vec::with_capacity(inputs.len());
+        for (input, batch_dim) in inputs.into_iter().zip(batch_dims) {
+            let stream = self
+                .residual_head
+                .expand(input, batch_dim.size(), command_buffer)
+                .map_err(TransformerEncodeError::Backend)?;
+            context_length += batch_dim.size();
+            chunks.push(Chunk {
+                state: Some(ChunkState::Stream(stream)),
+            });
+        }
+        let last = chunks.len() - 1;
+        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
+            self.prefill_cache_layer_count()
+        } else {
+            self.layers.len()
+        };
+        let mut hidden_features =
+            hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
+
+        let result = (|| {
+            for step in 0..=layer_count {
+                for index in 0..chunks.len() {
+                    if step > 0 {
+                        let layer = &self.layers[step - 1];
+                        let Some(ChunkState::MlpPending(pending)) = chunks[index].state.take() else {
+                            unreachable!("layer MLP hand-off is pending")
+                        };
+                        let stream =
+                            layer.encode_from_mlp(pending, per_layer_inputs, batch_dims[index], command_buffer)?;
+                        chunks[index].state = Some(ChunkState::Stream(stream));
+
+                        if index == last
+                            && let (Some(hidden_features), Some(indices)) =
+                                (&mut hidden_features, hidden_feature_layer_indices)
+                        {
+                            for (feature_index, &layer_index) in indices.iter().enumerate() {
+                                if layer_index == layer.layer_index {
+                                    let feature = self
+                                        .capture_hidden_feature(
+                                            match chunks[index].state.as_ref() {
+                                                Some(ChunkState::Stream(stream)) => stream,
+                                                _ => unreachable!("completed layer stream is available"),
+                                            },
+                                            command_buffer,
+                                        )
+                                        .map_err(TransformerEncodeError::Backend)?;
+                                    hidden_features[feature_index] = Some(feature);
+                                }
+                            }
+                        }
+                    }
+
+                    if step < layer_count {
+                        let layer = &self.layers[step];
+                        let layer_state = if let Some(state) = state.as_deref_mut() {
+                            Some(state.layer_state(layer.layer_index))
+                        } else {
+                            None
+                        };
+                        let Some(ChunkState::Stream(stream)) = chunks[index].state.take() else {
+                            unreachable!("previous layer stream is available")
+                        };
+                        let stream = layer.encode_before_mlp(
+                            stream,
+                            per_layer_inputs,
+                            batch_dims[index],
+                            layer_state,
+                            command_buffer,
+                        )?;
+                        let pending = layer.encode_until_mlp(stream, batch_dims[index].size(), command_buffer)?;
+                        chunks[index].state = Some(ChunkState::MlpPending(pending));
+
+                        if index < last {
+                            let accepted = (0..batch_dims[index].size()).collect::<Box<[u32]>>();
+                            state
+                                .as_deref_mut()
+                                .expect("overlapped chunks require state")
+                                .encode_accept_layer(layer.layer_index, &accepted, command_buffer)
+                                .map_err(TransformerEncodeError::Backend)?;
+                        }
+                    }
+                }
+            }
+            Ok::<(), TransformerEncodeError<B>>(())
+        })();
+        if let Err(error) = result {
+            for chunk in &mut chunks {
+                if let Some(ChunkState::MlpPending(pending)) = chunk.state.take() {
+                    pending.abandon(command_buffer);
+                }
+            }
+            return Err(error);
+        }
+
+        if let Some(state) = state {
+            state.context_length = context_length - batch_dims[last].size();
+        }
+
+        let hidden_features = hidden_features.map(|hidden_features| {
+            hidden_features
+                .into_iter()
+                .enumerate()
+                .map(|(feature_index, feature)| {
+                    feature.unwrap_or_else(|| {
+                        panic!(
+                            "requested hidden feature for missing layer {}",
+                            hidden_feature_layer_indices.unwrap()[feature_index]
+                        )
+                    })
+                })
+                .collect::<Box<[_]>>()
+        });
+        let Some(output_range) = output_range else {
+            return Ok(TransformerEncodeOutput {
+                output: None,
+                hidden_features,
+            });
+        };
+
+        let Some(ChunkState::Stream(last_stream)) = chunks[last].state.take() else {
+            unreachable!("last chunk completed all layers")
+        };
+        let output_row_count = output_range.end - output_range.start;
+        let (hidden, row_offset) =
+            match self.residual_head.readout(&last_stream, output_range.start, output_row_count, command_buffer)? {
+                Some(hidden) => (hidden, 0),
+                None => (last_stream, output_range.start),
+            };
+        let output = match &self.output_norm {
+            Some(output_norm) => output_norm
+                .encode(&hidden, row_offset, output_row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+                .map_err(TransformerEncodeError::Backend)?,
+            None if row_offset == 0 => hidden,
+            None => {
+                let row_size = hidden.size() / batch_dims[last].size() as usize;
+                let rows = row_offset as usize * row_size..(row_offset + output_row_count) as usize * row_size;
+                let mut output =
+                    command_buffer.allocate_scratch(rows.end - rows.start).map_err(TransformerEncodeError::Backend)?;
+                command_buffer.encode_copy((&hidden).subrange(rows), &mut output);
+                output
+            },
+        };
+        Ok(TransformerEncodeOutput {
+            output: Some(output),
+            hidden_features,
+        })
+    }
+
+    fn encode_single(
+        &self,
+        input: B::ScratchBuffer,
+        per_layer_inputs: Option<&B::ScratchBuffer>,
         batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,

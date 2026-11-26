@@ -4,11 +4,11 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer, CommandBufferEncoding},
-    config::mlp::dense_mlp::DenseMLPConfig,
+    backends::common::{Backend, CommandBuffer, CommandBufferEncoding, gpu_types::activation_type::ActivationType},
+    config::{clipping::ClippingBounds, mlp::dense_mlp::DenseMLPConfig},
     data_type::DataType,
     encodable_block::{
-        linear::{InputRhtParameters, Linear, LinearBlockError},
+        linear::{InputRhtParameters, Linear, LinearBlockError, RhtW4Layer},
         mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
     safetensors::ParameterTree,
@@ -18,6 +18,8 @@ pub struct DenseMlp<B: Backend> {
     up: Box<dyn Linear<B>>,
     gate: MlpGateActMulEncodable<B>,
     down: Box<dyn Linear<B>>,
+    /// Plain SiLU, unclipped, in bf16: what a block that restages the projections computes.
+    restageable: bool,
 }
 
 #[derive(Debug, Error)]
@@ -68,14 +70,29 @@ impl<B: Backend> DenseMlp<B> {
         )
         .map_err(DenseMlpNewError::Backend)?;
 
+        let restageable = data_type == DataType::BF16
+            && config.activation.act_type() == ActivationType::SILU
+            && config.activation.custom_alpha().is_none()
+            && config.gate_clipping == ClippingBounds::default()
+            && config.up_clipping == ClippingBounds::default();
+
         Ok((
             Self {
                 up,
                 gate,
                 down,
+                restageable,
             },
             up_input_hadamard_factors,
         ))
+    }
+
+    /// The up and down projections, if both are RHT W4 layers of a plain bf16 SiLU MLP.
+    pub fn rht_w4(&self) -> Option<(RhtW4Layer<'_, B>, RhtW4Layer<'_, B>)> {
+        if !self.restageable {
+            return None;
+        }
+        Some((self.up.rht_w4(None)?, self.down.rht_w4(self.gate.input_rht())?))
     }
 }
 

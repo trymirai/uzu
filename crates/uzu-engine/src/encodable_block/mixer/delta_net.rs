@@ -16,7 +16,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{InputRhtParameters, Linear, LinearBlockError},
+        linear::{InputBasis, InputRhtParameters, Linear, LinearBlockError},
         mixer::{
             Mixer, MixerEncodeError, MixerState,
             delta_net::tree_verify::{TreeVerifyEncodeArguments, TreeVerifyNewArguments},
@@ -203,6 +203,7 @@ impl<B: Backend> DeltaNet<B> {
                 context,
             )
             .await?;
+        let in_projection = context.wrap_linear(in_projection, outer_data_type);
 
         let conv_config = &config.conv_config;
         let conv_tree = parameter_tree.subtree("conv");
@@ -309,6 +310,7 @@ impl<B: Backend> DeltaNet<B> {
             context,
         )
         .await?;
+        let out_projection = context.wrap_linear(out_projection, outer_data_type);
 
         Ok((
             Self {
@@ -450,6 +452,7 @@ impl<B: Backend> DeltaNet<B> {
         &self,
         hidden: B::ScratchBuffer,
         batch_dim: &BatchTopology<B>,
+        input_basis: InputBasis,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         assert!(batch_dim.is_flat(), "stateless delta net requires sequential token order");
@@ -464,7 +467,8 @@ impl<B: Backend> DeltaNet<B> {
             .map_err(MixerEncodeError::Backend)?;
         command_buffer.encode_fill(&mut ssm_state, 0);
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let in_projected =
+            self.in_projection.encode_for_basis(hidden, batch_dim.size(), input_basis, command_buffer)?;
 
         self.encode_flat(in_projected, batch_dim.size(), &mut conv_state, &mut ssm_state, command_buffer)
     }
@@ -623,6 +627,17 @@ impl<B: Backend> DeltaNet<B> {
 }
 
 impl<B: Backend> Mixer<B> for DeltaNet<B> {
+    fn input_basis(
+        &self,
+        batch_dim: u32,
+    ) -> crate::encodable_block::linear::InputBasis {
+        self.in_projection.input_basis(batch_dim)
+    }
+
+    fn supports_unrotated_input(&self) -> bool {
+        self.in_projection.supports_unrotated_input()
+    }
+
     fn speculation_supported(&self) -> bool {
         self.tree_verify.is_some()
     }
@@ -667,9 +682,20 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
+        self.encode_for_basis(hidden, batch_dim, state, self.input_basis(batch_dim.size()), command_buffer)
+    }
+
+    fn encode_for_basis(
+        &self,
+        hidden: B::ScratchBuffer,
+        batch_dim: &BatchTopology<B>,
+        state: Option<MaybeMut<dyn MixerState<B>>>,
+        input_basis: InputBasis,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
         let command_buffer = &mut *command_buffer.debug_group("delta net");
         let Some(state) = state else {
-            return self.encode_stateless(hidden, batch_dim, command_buffer);
+            return self.encode_stateless(hidden, batch_dim, input_basis, command_buffer);
         };
 
         let state = state.downcast::<DeltaNetState<B>>().expect("incorrect type of delta net state");
@@ -685,7 +711,8 @@ impl<B: Backend> Mixer<B> for DeltaNet<B> {
             state.is_empty = false;
         }
 
-        let in_projected = self.in_projection.encode(hidden, batch_dim.size(), command_buffer)?;
+        let in_projected =
+            self.in_projection.encode_for_basis(hidden, batch_dim.size(), input_basis, command_buffer)?;
 
         if !batch_dim.full_accept() {
             let output = self.encode_tree_verify(&in_projected, batch_dim, state, command_buffer)?;

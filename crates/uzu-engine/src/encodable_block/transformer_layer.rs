@@ -14,11 +14,11 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
-        linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
+        linear::{InputBasis, InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState},
-        mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
+        mlp::{Mlp, MlpBlockNewError, MlpEncodeError, MlpStarted},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
-        residual::{ResidualConnection, ResidualEncodeError, ResidualNewError},
+        residual::{ResidualConnection, ResidualEncodeError, ResidualNewError, ResidualStarted},
         stream_op::{StreamOp, StreamOpContext, StreamOpEncodeError, StreamOpNewError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -76,6 +76,25 @@ struct Sublayer<B: Backend> {
     conv: Option<TransformerLayerConv<B>>,
     post_norm: Option<Normalization<B>>,
     connection: ResidualConnection<B>,
+}
+
+struct SublayerStarted<B: Backend> {
+    residual: ResidualStarted<B>,
+    conv_coefficients: Option<B::ScratchBuffer>,
+}
+
+pub struct PendingMlp<'a, B: Backend> {
+    mlp: MlpStarted<'a, B>,
+    sublayer: SublayerStarted<B>,
+}
+
+impl<B: Backend> PendingMlp<'_, B> {
+    pub fn abandon(
+        self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) {
+        let _ = self.mlp.finish(command_buffer);
+    }
 }
 
 pub struct TransformerLayer<B: Backend> {
@@ -153,6 +172,7 @@ impl<B: Backend> TransformerLayerConv<B> {
         &self,
         input: impl BufferRef<Backend = B>,
         sequence_length: u32,
+        apply_input_rht: bool,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(B::ScratchBuffer, B::ScratchBuffer), TransformerLayerError<B>> {
         let mut projection_input =
@@ -163,7 +183,7 @@ impl<B: Backend> TransformerLayerConv<B> {
             .pre_conv
             .encode(input, &coefficients, 2 * self.coefficient_count, 0, sequence_length, command_buffer)
             .map_err(TransformerLayerError::Backend)?;
-        if let Some((transform, signs)) = &self.input_rht {
+        if apply_input_rht && let Some((transform, signs)) = &self.input_rht {
             transform.encode_fp_in_place(
                 &mut output,
                 Some(&**signs),
@@ -202,6 +222,7 @@ impl<B: Backend> Sublayer<B> {
         name: &'static str,
         config: &SublayerConfigCommon,
         mut input_hadamard_factors: Option<InputRhtParameters<B>>,
+        allow_unrotated_input: bool,
         residual_config: &AnyResidualConfig,
         layer_parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
@@ -225,19 +246,32 @@ impl<B: Backend> Sublayer<B> {
         };
 
         let pre_norm = if let Some(norm_config) = &config.pre_norm_config {
-            Some(
-                Normalization::new(
+            let input_hadamard_factors = input_hadamard_factors.take();
+            Some(if allow_unrotated_input {
+                Normalization::new_with_unrotated_input(
                     model_dim,
                     data_type,
                     data_type,
-                    input_hadamard_factors.take(),
+                    input_hadamard_factors,
                     ShortcutMode::None,
                     norm_config,
                     &parameter_tree.subtree("pre_norm"),
                     context,
                 )
-                .await?,
-            )
+                .await?
+            } else {
+                Normalization::new(
+                    model_dim,
+                    data_type,
+                    data_type,
+                    input_hadamard_factors,
+                    ShortcutMode::None,
+                    norm_config,
+                    &parameter_tree.subtree("pre_norm"),
+                    context,
+                )
+                .await?
+            })
         } else {
             None
         };
@@ -284,48 +318,100 @@ impl<B: Backend> Sublayer<B> {
         })
     }
 
+    fn start(
+        &self,
+        stream: B::ScratchBuffer,
+        row_count: u32,
+        input_basis: InputBasis,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(SublayerStarted<B>, B::ScratchBuffer), TransformerLayerError<B>> {
+        let mut conv_coefficients = None;
+        let (residual, hidden) = self.connection.start_with_body_input::<TransformerLayerError<B>>(
+            stream,
+            row_count,
+            command_buffer,
+            |input, command_buffer| {
+                let mut hidden = match (&self.pre_norm, input) {
+                    (Some(pre_norm), input) => pre_norm
+                        .encode_with_unrotated_input(
+                            &*input,
+                            0,
+                            row_count,
+                            None::<&mut B::ScratchBuffer>,
+                            input_basis == InputBasis::AneUnrotated,
+                            command_buffer,
+                        )
+                        .map_err(TransformerLayerError::Backend)?,
+                    (None, MaybeOwned::Owned(input)) => input,
+                    (None, MaybeOwned::Borrowed(input)) => {
+                        let mut hidden =
+                            command_buffer.allocate_scratch(input.size()).map_err(TransformerLayerError::Backend)?;
+                        command_buffer.encode_copy(input, &mut hidden);
+                        hidden
+                    },
+                };
+
+                if let Some(conv) = &self.conv {
+                    let (conv_output, coefficients) = conv.encode_pre_convolution(
+                        &hidden,
+                        row_count,
+                        input_basis != InputBasis::AneUnrotated,
+                        command_buffer,
+                    )?;
+                    hidden = conv_output;
+                    conv_coefficients = Some(coefficients);
+                }
+                Ok(hidden)
+            },
+        )?;
+        Ok((
+            SublayerStarted {
+                residual,
+                conv_coefficients,
+            },
+            hidden,
+        ))
+    }
+
+    fn finish(
+        &self,
+        started: SublayerStarted<B>,
+        mut hidden: B::ScratchBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
+        if let Some(coefficients) = started.conv_coefficients {
+            hidden = self
+                .conv
+                .as_ref()
+                .expect("convolution coefficients require convolution")
+                .encode_post_convolution(&hidden, &coefficients, row_count, command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
+        }
+        if let Some(post_norm) = &self.post_norm {
+            hidden = post_norm
+                .encode(&hidden, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
+                .map_err(TransformerLayerError::Backend)?;
+        }
+        self.connection
+            .finish(started.residual, hidden, row_count, command_buffer)
+            .map_err(TransformerLayerError::ResidualEncode)
+    }
+
     fn encode(
         &self,
         stream: B::ScratchBuffer,
         row_count: u32,
+        input_basis: InputBasis,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         body: impl FnOnce(
             B::ScratchBuffer,
             &mut <B::CommandBuffer as CommandBuffer>::Encoding,
         ) -> Result<B::ScratchBuffer, TransformerLayerError<B>>,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
-        self.connection.encode(&stream, row_count, command_buffer, |input, command_buffer| {
-            let mut hidden = match (&self.pre_norm, input) {
-                (Some(pre_norm), input) => pre_norm
-                    .encode(&*input, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
-                    .map_err(TransformerLayerError::Backend)?,
-                (None, MaybeOwned::Owned(input)) => input,
-                (None, MaybeOwned::Borrowed(input)) => {
-                    let mut hidden =
-                        command_buffer.allocate_scratch(input.size()).map_err(TransformerLayerError::Backend)?;
-                    command_buffer.encode_copy(input, &mut hidden);
-                    hidden
-                },
-            };
-
-            if let Some(conv) = &self.conv {
-                let (conv_output, coefficients) = conv.encode_pre_convolution(&hidden, row_count, command_buffer)?;
-                let body_output = body(conv_output, command_buffer)?;
-                hidden = conv
-                    .encode_post_convolution(&body_output, &coefficients, row_count, command_buffer)
-                    .map_err(TransformerLayerError::Backend)?;
-            } else {
-                hidden = body(hidden, command_buffer)?;
-            }
-
-            if let Some(post_norm) = &self.post_norm {
-                hidden = post_norm
-                    .encode(&hidden, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
-                    .map_err(TransformerLayerError::Backend)?;
-            }
-
-            Ok(hidden)
-        })
+        let (started, hidden) = self.start(stream, row_count, input_basis, command_buffer)?;
+        let update = body(hidden, command_buffer)?;
+        self.finish(started, update, row_count, command_buffer)
     }
 }
 
@@ -382,6 +468,7 @@ impl<B: Backend> TransformerLayer<B> {
             context,
         )
         .await?;
+        let mixer_supports_unrotated_input = mixer.supports_unrotated_input();
         let mixer_sublayer = Sublayer::new(
             model_dim,
             data_type,
@@ -389,6 +476,7 @@ impl<B: Backend> TransformerLayer<B> {
             "mixer",
             &layer_config.mixer.common,
             mixer_hadamard_factors,
+            mixer_supports_unrotated_input,
             residual_config,
             parameter_tree,
             context,
@@ -404,6 +492,7 @@ impl<B: Backend> TransformerLayer<B> {
             context,
         )
         .await?;
+        let mlp_supports_unrotated_input = mlp.supports_unrotated_input();
         let mlp_sublayer = Sublayer::new(
             model_dim,
             data_type,
@@ -411,6 +500,7 @@ impl<B: Backend> TransformerLayer<B> {
             "mlp",
             &layer_config.mlp.common,
             mlp_hadamard_factors,
+            mlp_supports_unrotated_input,
             residual_config,
             parameter_tree,
             context,
@@ -432,34 +522,73 @@ impl<B: Backend> TransformerLayer<B> {
     pub fn encode(
         &self,
         mut stream: B::ScratchBuffer,
-        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        per_layer_inputs: Option<&B::ScratchBuffer>,
         batch_dim: &BatchTopology<B>,
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
         let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
         let row_count = batch_dim.size();
+        stream = self.encode_before_mlp(stream, per_layer_inputs, batch_dim, state, command_buffer)?;
+        let pending = self.encode_until_mlp(stream, row_count, command_buffer)?;
+        self.encode_from_mlp(pending, per_layer_inputs, batch_dim, command_buffer)
+    }
+
+    pub fn encode_before_mlp(
+        &self,
+        mut stream: B::ScratchBuffer,
+        per_layer_inputs: Option<&B::ScratchBuffer>,
+        batch_dim: &BatchTopology<B>,
+        state: Option<MaybeMut<dyn MixerState<B>>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
+        let row_count = batch_dim.size();
         let op_context = StreamOpContext {
             batch_dim,
             per_layer_inputs,
         };
-
         for op in &self.prologue {
             stream = op.encode(stream, &op_context, command_buffer)?;
         }
+        let mixer_input_basis = self.mixer.input_basis(row_count);
+        self.mixer_sublayer.encode(stream, row_count, mixer_input_basis, command_buffer, |hidden, command_buffer| {
+            Ok(self.mixer.encode_for_basis(hidden, batch_dim, state, mixer_input_basis, command_buffer)?)
+        })
+    }
 
-        stream = self.mixer_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
-            Ok(self.mixer.encode(hidden, batch_dim, state, command_buffer)?)
-        })?;
+    pub fn encode_until_mlp<'a>(
+        &'a self,
+        stream: B::ScratchBuffer,
+        row_count: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<PendingMlp<'a, B>, TransformerLayerError<B>> {
+        let input_basis = self.mlp.input_basis(row_count);
+        let (sublayer, hidden) = self.mlp_sublayer.start(stream, row_count, input_basis, command_buffer)?;
+        let mlp = self.mlp.encode_start_for_basis(hidden, row_count, input_basis, command_buffer)?;
+        Ok(PendingMlp {
+            mlp,
+            sublayer,
+        })
+    }
 
-        stream = self.mlp_sublayer.encode(stream, row_count, command_buffer, |hidden, command_buffer| {
-            Ok(self.mlp.encode(hidden, row_count, command_buffer)?)
-        })?;
-
+    pub fn encode_from_mlp(
+        &self,
+        pending: PendingMlp<'_, B>,
+        per_layer_inputs: Option<&B::ScratchBuffer>,
+        batch_dim: &BatchTopology<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
+        let row_count = batch_dim.size();
+        let update = pending.mlp.finish(command_buffer)?;
+        let stream = self.mlp_sublayer.finish(pending.sublayer, update, row_count, command_buffer)?;
+        let op_context = StreamOpContext {
+            batch_dim,
+            per_layer_inputs,
+        };
+        let mut stream = stream;
         for op in &self.epilogue {
             stream = op.encode(stream, &op_context, command_buffer)?;
         }
-
         Ok(stream)
     }
 }

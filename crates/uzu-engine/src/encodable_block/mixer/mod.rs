@@ -9,7 +9,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        linear::{InputRhtParameters, LinearEncodeError},
+        linear::{InputBasis, InputRhtParameters, LinearEncodeError},
         mixer::{
             attention::{Attention, AttentionEncodeError, AttentionNewError},
             delta_net::{DeltaNet, DeltaNetNewError},
@@ -55,9 +55,22 @@ pub enum MixerEncodeError<B: Backend> {
     Linear(#[from] LinearEncodeError<B>),
     #[error("Attention error: {0}")]
     Attention(#[from] AttentionEncodeError<B>),
+    #[error("the selected mixer input basis is no longer available")]
+    InputBasisUnavailable,
 }
 
 pub trait Mixer<B: Backend>: Any + Send + Sync {
+    fn input_basis(
+        &self,
+        _batch_dim: u32,
+    ) -> InputBasis {
+        InputBasis::GpuExpected
+    }
+
+    fn supports_unrotated_input(&self) -> bool {
+        false
+    }
+
     fn speculation_supported(&self) -> bool;
 
     fn max_context_length(&self) -> Option<u32>;
@@ -75,6 +88,20 @@ pub trait Mixer<B: Backend>: Any + Send + Sync {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MixerEncodeError<B>>;
+
+    fn encode_for_basis(
+        &self,
+        hidden: B::ScratchBuffer,
+        batch_dim: &BatchTopology<B>,
+        state: Option<MaybeMut<dyn MixerState<B>>>,
+        basis: InputBasis,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MixerEncodeError<B>> {
+        if basis == InputBasis::AneUnrotated {
+            return Err(MixerEncodeError::InputBasisUnavailable);
+        }
+        self.encode(hidden, batch_dim, state, command_buffer)
+    }
 }
 
 #[derive(Debug, Error)]

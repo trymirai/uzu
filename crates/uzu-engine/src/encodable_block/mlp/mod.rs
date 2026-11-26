@@ -1,16 +1,17 @@
 mod dense;
 mod gate_act_mul;
 
+pub use dense::DenseMlp;
 use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, CommandBuffer},
+    backends::common::{Backend, CommandBuffer, Context},
     config::mlp::AnyMLPConfig,
     data_type::DataType,
     encodable_block::{
-        linear::{InputRhtParameters, LinearEncodeError},
-        mlp::dense::{DenseMlp, DenseMlpNewError},
+        linear::{InputBasis, InputRhtParameters, LinearEncodeError},
+        mlp::dense::DenseMlpNewError,
     },
     safetensors::ParameterTree,
 };
@@ -21,6 +22,36 @@ pub enum MlpEncodeError<B: Backend> {
     Backend(#[source] B::Error),
     #[error("Linear error: {0}")]
     Linear(#[from] LinearEncodeError<B>),
+    #[error("the selected MLP input basis is no longer available")]
+    InputBasisUnavailable,
+}
+
+/// An MLP whose encoding was started with [`Mlp::encode_start`].
+pub enum MlpStarted<'a, B: Backend> {
+    /// All of it is encoded.
+    Done(B::ScratchBuffer),
+    /// Encoded up to a hand-off to other hardware: what is encoded before the closure runs alongside
+    /// the hand-off, and the closure encodes the rest and yields the output.
+    Handoff(
+        Box<
+            dyn FnOnce(
+                    &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+                ) -> Result<B::ScratchBuffer, MlpEncodeError<B>>
+                + 'a,
+        >,
+    ),
+}
+
+impl<B: Backend> MlpStarted<'_, B> {
+    pub fn finish(
+        self,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, MlpEncodeError<B>> {
+        match self {
+            Self::Done(output) => Ok(output),
+            Self::Handoff(finish) => finish(command_buffer),
+        }
+    }
 }
 
 pub trait Mlp<B: Backend>: Send + Sync {
@@ -30,6 +61,41 @@ pub trait Mlp<B: Backend>: Send + Sync {
         batch_dim: u32,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, MlpEncodeError<B>>;
+
+    /// Encodes the MLP up to a hand-off to other hardware (see [`MlpStarted`]). Default: all of it,
+    /// as [`Self::encode`].
+    fn encode_start<'a>(
+        &'a self,
+        input: B::ScratchBuffer,
+        batch_dim: u32,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<MlpStarted<'a, B>, MlpEncodeError<B>> {
+        Ok(MlpStarted::Done(self.encode(input, batch_dim, command_buffer)?))
+    }
+
+    fn input_basis(
+        &self,
+        _batch_dim: u32,
+    ) -> InputBasis {
+        InputBasis::GpuExpected
+    }
+
+    fn supports_unrotated_input(&self) -> bool {
+        false
+    }
+
+    fn encode_start_for_basis<'a>(
+        &'a self,
+        input: B::ScratchBuffer,
+        batch_dim: u32,
+        basis: InputBasis,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<MlpStarted<'a, B>, MlpEncodeError<B>> {
+        if basis == InputBasis::AneUnrotated {
+            return Err(MlpEncodeError::InputBasisUnavailable);
+        }
+        self.encode_start(input, batch_dim, command_buffer)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -55,7 +121,7 @@ impl<B: Backend> dyn Mlp<B> {
                     DenseMlp::new(model_dimension, hidden_dimension, data_type, config, parameter_tree, context)
                         .await?;
 
-                Ok((Box::new(dense), up_input_hadamard_factors))
+                Ok((context.wrap_mlp(dense), up_input_hadamard_factors))
             },
             AnyMLPConfig::MixtureOfExpertsConfig(_) => Err(MlpBlockNewError::UnsupportedMixtureOfExperts),
         }

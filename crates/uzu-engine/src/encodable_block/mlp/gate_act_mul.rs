@@ -57,6 +57,11 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
         })
     }
 
+    /// The down projection's input RHT signs this block applies, if any.
+    pub fn input_rht(&self) -> Option<&B::GlobalGpuBuffer> {
+        self.hadamard_factors.as_deref()
+    }
+
     pub fn encode_for_linear(
         &self,
         fused_up: impl BufferRef<Backend = B>,

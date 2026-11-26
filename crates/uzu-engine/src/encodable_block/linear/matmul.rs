@@ -16,7 +16,7 @@ use crate::{
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearEncodeError, LinearInput},
+        linear::{Linear, LinearEncodeError, LinearInput, RhtW4Layer},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -253,5 +253,13 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
             self.prepared_activation_format,
             context,
         )
+    }
+
+    fn rht_w4<'a>(
+        &'a self,
+        fused_input_rht: Option<&'a B::GlobalGpuBuffer>,
+    ) -> Option<RhtW4Layer<'a, B>> {
+        let input_signs = fused_input_rht?;
+        RhtW4Layer::new(&self.matrix, self.biases.is_some(), input_signs, self.output_hadamard_factors.as_ref()?)
     }
 }

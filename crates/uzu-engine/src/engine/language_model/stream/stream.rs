@@ -17,7 +17,7 @@ use crate::{
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
+    encodable_block::{batch_topology::BatchTopology, decoder::DecoderEncodeOutput, sampling::SamplingMethod},
     engine::language_model::{
         LanguageModel,
         grammar::Grammar,
@@ -250,6 +250,91 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         Ok(resolved)
     }
 
+    fn finish_prefill(
+        model: &LanguageModel<B>,
+        model_state: &mut LanguageModelState<B>,
+        grammar: &mut Option<Grammar>,
+        sampling_method: &SamplingMethod,
+        context_ring: &mut Option<B::GlobalGpuBuffer>,
+        metrics: &mut TokenStreamMetrics,
+        decoder_output: DecoderEncodeOutput<B>,
+        token_ids: B::ConstantBuffer,
+        batch_dim: BatchTopology<B>,
+        sampling_range: Range<u32>,
+        input_length: usize,
+        mut command_buffer: <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
+        let logits = decoder_output.logits.unwrap();
+        let seeds = if matches!(sampling_method, SamplingMethod::Stochastic { .. }) {
+            Some(
+                command_buffer
+                    .allocate_constant_from_slice(&[model_state.prng.derive(model_state.tokens.len() as u64 - 1)])
+                    .map_err(LanguageModelStreamError::Backend)?,
+            )
+        } else {
+            None
+        };
+
+        let bitmask = if let Some(grammar) = grammar.as_mut() {
+            let mut bitmask = command_buffer
+                .allocate_constant(
+                    model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
+                )
+                .map_err(LanguageModelStreamError::Backend)?;
+
+            if grammar.next_bitmask(bitmask.as_slice_mut()) {
+                Some(bitmask)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let output_token = model
+            .sampling
+            .encode(
+                &logits,
+                seeds.as_ref(),
+                bitmask.as_ref(),
+                context_ring.as_ref(),
+                Some(&token_ids),
+                &batch_dim,
+                sampling_range,
+                sampling_method,
+                &mut command_buffer,
+            )
+            .map_err(LanguageModelStreamError::Backend)?;
+
+        if let Some(suffix_repetition_length) = sampling_method.suffix_repetition_length() {
+            model.context_ring_update.encode(
+                &token_ids,
+                context_ring.as_mut().unwrap(),
+                suffix_repetition_length,
+                batch_dim.size(),
+                &mut command_buffer,
+            );
+        }
+
+        metrics.num_prefill_forward_passes += 1;
+        metrics.num_tokens_prefilled += input_length;
+        metrics.num_tokens_proposed += 1;
+        drop(token_ids);
+        drop(seeds);
+        drop(bitmask);
+        let pending = command_buffer.end_encoding().submit();
+
+        Ok(GenerationJob::Pending {
+            output_norm: decoder_output.final_hidden,
+            output_tokens: output_token,
+            batch_dim,
+            input_token_ids: None,
+            hidden_features: decoder_output.hidden_features,
+            capture_span: None,
+            pendings: Box::new([pending]),
+        })
+    }
+
     pub fn prefill(
         &mut self,
         input: &[u64],
@@ -261,13 +346,32 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         // 1024). This is really bad design, attention should be rewritten to
         // allow on-demand suffix length
         let max_batch_size = 1024;
-        let number_of_batches = input.len().div_ceil(max_batch_size);
+        let standard_number_of_batches = input.len().div_ceil(max_batch_size);
+        let pipelined_chunk_lengths = if self.model.speculator.is_none()
+            && self.options.sampling_method.suffix_repetition_length().is_none()
+            && self.model.decoder.supports_layerwise_prefill_pipelining()
+        {
+            self.model.engine.context.prefill_chunk_lengths(input.len()).filter(|lengths| {
+                lengths.len() >= 2
+                    && lengths.iter().all(|&length| length > 0 && length <= max_batch_size)
+                    && lengths.iter().sum::<usize>() == input.len()
+            })
+        } else {
+            None
+        };
+        let number_of_batches = pipelined_chunk_lengths.as_ref().map_or(standard_number_of_batches, Vec::len);
+        let (prepared_prefix, prepared_suffix) = if let Some(chunk_lengths) = &pipelined_chunk_lengths {
+            let suffix = *chunk_lengths.last().unwrap();
+            (input.len() - suffix, suffix)
+        } else {
+            ((standard_number_of_batches - 1) * max_batch_size, usize::min(max_batch_size, input.len()))
+        };
 
         self.model_state
             .transformer_state
             .prepare(
-                self.model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
-                usize::min(max_batch_size, input.len()) as u32,
+                self.model_state.transformer_state.context_length() + prepared_prefix as u32,
+                prepared_suffix as u32,
             )
             .map_err(LanguageModelStreamError::Backend)?;
 
@@ -288,6 +392,89 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         let hidden_feature_layer_indices =
             self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
+
+        if let Some(chunk_lengths) = pipelined_chunk_lengths {
+            let mut final_output = None;
+            let mut pipeline_token_ids = Vec::new();
+            let mut final_token_index = None;
+            let mut range_start = 0;
+            let mut chunk_index = 0;
+
+            while chunk_index < chunk_lengths.len() {
+                let group_end = usize::min(chunk_index + 2, chunk_lengths.len());
+                let mut chunk_ranges = Vec::with_capacity(group_end - chunk_index);
+                for &chunk_length in &chunk_lengths[chunk_index..group_end] {
+                    let range_end = range_start + chunk_length;
+                    chunk_ranges.push(range_start..range_end);
+                    range_start = range_end;
+                }
+                let is_final_group = group_end == chunk_lengths.len();
+
+                let mut token_ids = Vec::with_capacity(chunk_ranges.len());
+                let mut batch_dims = Vec::with_capacity(chunk_ranges.len());
+                for range in &chunk_ranges {
+                    token_ids.push(
+                        command_buffer
+                            .allocate_constant_from_slice(
+                                &input[range.clone()].iter().map(|&token_id| token_id as u32).collect::<Box<[_]>>(),
+                            )
+                            .map_err(LanguageModelStreamError::Backend)?,
+                    );
+                    batch_dims.push(BatchTopology::flat(range.len() as u32));
+                }
+                let batch_dim_refs = batch_dims.iter().collect::<Vec<_>>();
+                let token_id_refs = token_ids.iter().collect::<Vec<_>>();
+                let final_batch_dim = BatchTopology::flat(1);
+                let last_chunk_length = batch_dims.last().unwrap().size();
+                let output_range = is_final_group.then(|| (last_chunk_length - 1..last_chunk_length).into());
+
+                let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
+                let decoder_output = self.model.decoder.encode_chunks(
+                    &token_id_refs,
+                    &batch_dim_refs,
+                    output_range,
+                    None,
+                    &mut self.model_state.transformer_state,
+                    &mut command_buffer,
+                )?;
+                drop(encode_span);
+
+                let accepted = (0..last_chunk_length).collect::<Box<[u32]>>();
+                self.model_state
+                    .transformer_state
+                    .encode_accept(&accepted, &mut command_buffer)
+                    .map_err(LanguageModelStreamError::Backend)?;
+                for range in &chunk_ranges {
+                    self.model_state.tokens.extend_from_slice(&input[range.clone()]);
+                }
+
+                if is_final_group {
+                    final_output = Some((decoder_output, final_batch_dim));
+                    final_token_index = Some(pipeline_token_ids.len() + token_ids.len() - 1);
+                }
+                pipeline_token_ids.extend(token_ids);
+                chunk_index = group_end;
+            }
+
+            let (decoder_output, batch_dim) = final_output.expect("prefill has a final chunk");
+            let token_ids = pipeline_token_ids.swap_remove(final_token_index.expect("prefill has a final token"));
+            drop(pipeline_token_ids);
+            let job = Self::finish_prefill(
+                self.model,
+                self.model_state,
+                &mut self.options.grammar,
+                &self.options.sampling_method,
+                &mut self.context_ring,
+                &mut self.metrics,
+                decoder_output,
+                token_ids,
+                batch_dim,
+                (0..1).into(),
+                input.len(),
+                command_buffer,
+            )?;
+            return Ok(job);
+        }
 
         let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
             let token_ids = command_buffer
@@ -356,82 +543,22 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             encode_batch(final_chunk, true)?
         };
 
-        let logits = decoder_output.logits.unwrap();
-
-        let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
-            Some(
-                command_buffer
-                    .allocate_constant_from_slice(&[self
-                        .model_state
-                        .prng
-                        .derive(self.model_state.tokens.len() as u64 - 1)])
-                    .map_err(LanguageModelStreamError::Backend)?,
-            )
-        } else {
-            None
-        };
-
-        let bitmask = if let Some(grammar) = self.options.grammar.as_mut() {
-            let mut bitmask = command_buffer
-                .allocate_constant(
-                    self.model.vocab_size.div_ceil(DataType::U32.size_in_bits()) * DataType::U32.size_in_bytes(),
-                )
-                .map_err(LanguageModelStreamError::Backend)?;
-
-            if grammar.next_bitmask(bitmask.as_slice_mut()) {
-                Some(bitmask)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let output_norm = decoder_output.final_hidden;
         let sampled_row = batch_dim.size() - 1;
-        let output_token = self
-            .model
-            .sampling
-            .encode(
-                &logits,
-                seeds.as_ref(),
-                bitmask.as_ref(),
-                self.context_ring.as_ref(),
-                Some(&token_ids),
-                &batch_dim,
-                (sampled_row..sampled_row + 1).into(),
-                &self.options.sampling_method,
-                &mut command_buffer,
-            )
-            .map_err(LanguageModelStreamError::Backend)?;
-
-        if let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
-            self.model.context_ring_update.encode(
-                &token_ids,
-                self.context_ring.as_mut().unwrap(),
-                suffix_repetition_length,
-                batch_dim.size(),
-                &mut command_buffer,
-            );
-        }
-
-        drop(seeds);
-        drop(bitmask);
-        drop(token_ids);
-
-        self.metrics.num_prefill_forward_passes += 1;
-        self.metrics.num_tokens_prefilled += input.len();
-        self.metrics.num_tokens_proposed += 1;
-
-        Ok(GenerationJob::Pending {
-            output_norm,
-            output_tokens: output_token,
+        drop(encode_batch);
+        Self::finish_prefill(
+            self.model,
+            self.model_state,
+            &mut self.options.grammar,
+            &self.options.sampling_method,
+            &mut self.context_ring,
+            &mut self.metrics,
+            decoder_output,
+            token_ids,
             batch_dim,
-            input_token_ids: None,
-            hidden_features: decoder_output.hidden_features,
-            capture_span: None,
-            pendings: Box::new([command_buffer.end_encoding().submit()]),
-        })
+            (sampled_row..sampled_row + 1).into(),
+            input.len(),
+            command_buffer,
+        )
     }
 
     pub async fn get_and_queue_pass(
