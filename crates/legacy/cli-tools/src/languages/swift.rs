@@ -88,7 +88,7 @@ impl LanguageBackend for SwiftLanguageBackend {
         let sources_path = any_slice_path.path().join("Sources");
         fs::create_dir_all(&generated_sources_path)?;
         copy_directory(&sources_path, &generated_sources_path)?;
-        generate_swift_extensions(paths.crates_path(), extensions_path.clone())?;
+        generate_swift_extensions(&paths.crates_path(), &extensions_path)?;
 
         Ok(())
     }
