@@ -1,7 +1,6 @@
 use std::path::Path;
 
 mod docs;
-mod jsr;
 mod license;
 mod mirai_gui;
 mod package_json;
@@ -15,7 +14,6 @@ mod typescript_version;
 mod wasm_tool;
 
 use anyhow::{Ok, Result, anyhow};
-pub use jsr::JsrSyncTask;
 pub use license::LicenseSyncTask;
 pub use mirai_gui::MiraiGuiSyncTask;
 pub use package_json::PackageJsonSyncTask;
@@ -100,20 +98,7 @@ pub fn run_sync(check: bool) -> Result<()> {
         &typescript_bindings_path.join("package.json"),
         check,
     )?;
-    JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json"), check)?;
-    JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json.orig"), check)?;
-    TypeScriptVersionSyncTask::Constant.run(
-        &platforms,
-        &workspace,
-        &typescript_bindings_path.join("src/version.ts"),
-        check,
-    )?;
-    TypeScriptVersionSyncTask::NapiLoader.run(
-        &platforms,
-        &workspace,
-        &paths.napi_output_path().join("index.js"),
-        check,
-    )?;
+    TypeScriptVersionSyncTask.run(&platforms, &workspace, &paths.napi_output_path().join("index.js"), check)?;
     LicenseSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("LICENSE"), check)?;
     ReadmeSyncTask::new(vec![Language::TypeScript]).run(
         &platforms,
