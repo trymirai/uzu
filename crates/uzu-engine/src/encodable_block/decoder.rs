@@ -207,6 +207,7 @@ impl<B: Backend> Decoder<B> {
         })
     }
 
+    // proxy method to transformer, to avoid making `transformer` field pub
     pub fn encode_embedded(
         &self,
         embedded: B::ScratchBuffer,

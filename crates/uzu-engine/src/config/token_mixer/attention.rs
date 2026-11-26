@@ -29,6 +29,17 @@ pub struct AttentionConfig {
 }
 
 impl AttentionConfig {
+    pub fn qkvg_head_count(&self) -> u32 {
+        let mut heads = self.num_heads; // query
+        if !self.is_kv_sharing {
+            heads += 2 * self.num_groups; // key + value
+        }
+        if self.has_gate {
+            heads += self.num_heads; // gate
+        }
+        heads
+    }
+
     pub fn value_norm_config(&self) -> Option<NormalizationConfig> {
         self.normalize_values.then_some(NormalizationConfig {
             epsilon: 1e-6,

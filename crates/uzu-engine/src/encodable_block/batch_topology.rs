@@ -3,16 +3,16 @@ use std::ops::Range;
 use crate::backends::common::Backend;
 
 pub enum BatchKind<B: Backend> {
-    Sequence,
-    Trie {
-        nodes: B::GlobalGpuBuffer,
-        is_flat: bool,
-    },
+    Flat,
     Image {
         width: u32,
         height: u32,
         merge_size: u32,
         first_cell: u32,
+    },
+    Trie {
+        nodes: B::GlobalGpuBuffer,
+        is_flat: bool,
     },
 }
 
@@ -24,21 +24,7 @@ pub struct BatchTopology<B: Backend> {
 impl<B: Backend> BatchTopology<B> {
     pub fn flat(size: u32) -> Self {
         Self {
-            kind: BatchKind::Sequence,
-            size,
-        }
-    }
-
-    pub fn trie(
-        nodes: B::GlobalGpuBuffer,
-        size: u32,
-        is_flat: bool,
-    ) -> Self {
-        Self {
-            kind: BatchKind::Trie {
-                nodes,
-                is_flat,
-            },
+            kind: BatchKind::Flat,
             size,
         }
     }
@@ -60,6 +46,20 @@ impl<B: Backend> BatchTopology<B> {
         }
     }
 
+    pub fn trie(
+        nodes: B::GlobalGpuBuffer,
+        size: u32,
+        is_flat: bool,
+    ) -> Self {
+        Self {
+            kind: BatchKind::Trie {
+                nodes,
+                is_flat,
+            },
+            size,
+        }
+    }
+
     pub fn kind(&self) -> &BatchKind<B> {
         &self.kind
     }
@@ -74,14 +74,14 @@ impl<B: Backend> BatchTopology<B> {
 
     pub fn is_flat(&self) -> bool {
         match self.kind {
+            BatchKind::Flat
+            | BatchKind::Image {
+                ..
+            } => true,
             BatchKind::Trie {
                 is_flat,
                 ..
             } => is_flat,
-            BatchKind::Sequence
-            | BatchKind::Image {
-                ..
-            } => true,
         }
     }
 
@@ -91,7 +91,7 @@ impl<B: Backend> BatchTopology<B> {
                 nodes,
                 ..
             } => Some(nodes),
-            BatchKind::Sequence
+            BatchKind::Flat
             | BatchKind::Image {
                 ..
             } => None,

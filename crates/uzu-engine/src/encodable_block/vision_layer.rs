@@ -204,18 +204,11 @@ impl<B: Backend> VisionLayer<B> {
         padded_head_dim: u32,
         context: &B::Context,
     ) -> Result<Attention<B>, VisionLayerNewError<B>> {
-        let qkv_heads = config.num_heads * (1 + u32::from(config.has_gate))
-            + if config.is_kv_sharing {
-                0
-            } else {
-                2 * config.num_groups
-            };
-
+        let qkv_heads_count = config.qkvg_head_count();
         let qkv_proj_tree = tree.subtree("qkvg_projection");
-
         let qkv_weights_slice = qkv_proj_tree
             .subtree("weights")
-            .read_slice::<T>("weights", &[qkv_heads * config.head_dim, model_dim])
+            .read_slice::<T>("weights", &[qkv_heads_count * config.head_dim, model_dim])
             .await?;
         let qkv_weights_buf = create_padded_buffer::<B, T>(
             context,
@@ -227,7 +220,8 @@ impl<B: Backend> VisionLayer<B> {
         .map_err(VisionLayerNewError::Backend)?;
 
         let qkv_biases_buf = if config.has_qkvg_biases {
-            let qkv_biases_slice = qkv_proj_tree.read_slice::<T>("biases", &[qkv_heads * config.head_dim]).await?;
+            let qkv_biases_slice =
+                qkv_proj_tree.read_slice::<T>("biases", &[qkv_heads_count * config.head_dim]).await?;
             let qkv_biases_buf = create_padded_buffer::<B, T>(
                 context,
                 &qkv_biases_slice,
@@ -243,7 +237,7 @@ impl<B: Backend> VisionLayer<B> {
 
         let projection = LinearMatmul::from_dense(
             model_dim,
-            qkv_heads * padded_head_dim,
+            qkv_heads_count * padded_head_dim,
             data_type,
             qkv_weights_buf,
             qkv_biases_buf,

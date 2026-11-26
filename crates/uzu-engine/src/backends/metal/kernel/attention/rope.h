@@ -20,9 +20,6 @@ METAL_FUNC float rope_rotate(
   return element * (cos_val * scale) + signed_paired * (sin_val * scale);
 }
 
-// The M-RoPE axis offset of a pair. Interleaved axes: pairs 1, 4, 7, ... add the grid row, pairs 2, 5, 8, ... the grid
-// column, while the axis has pairs left. Otherwise the pairs of an axis are contiguous: position, then row, then
-// column.
 METAL_FUNC uint32_t mrope_axis_offset(
     uint32_t pair,
     uint32_t pairs,

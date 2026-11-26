@@ -2,9 +2,6 @@ use num_traits::Float;
 
 use crate::data_type::DataTypeRepr;
 
-/// The M-RoPE axis offset of a pair. Interleaved axes: pairs 1, 4, 7, ... add the grid row, pairs 2, 5, 8, ... the grid
-/// column, while the axis has pairs left. Otherwise the pairs of an axis are contiguous: position, then row, then
-/// column.
 pub(super) fn mrope_axis_offset(
     pair: u32,
     pairs: u32,
