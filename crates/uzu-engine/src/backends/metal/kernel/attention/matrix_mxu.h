@@ -89,7 +89,6 @@ struct AttentionMatrixSoftmax {
   }
 };
 
-// Trie rows that see a key: [first, last], packed in one uint (ushort2 costs registers).
 struct RowRange {
   uint packed;
 
@@ -99,7 +98,6 @@ struct RowRange {
   METAL_FUNC bool contains(uint row) const thread { return row >= (packed & 0xFFFFu) && row <= packed >> 16; }
 };
 
-// Ring blocks first (wrapping), then suffix blocks.
 struct VisibleKeyBlocks {
   uint ring_blocks;
   uint first_ring_block;
