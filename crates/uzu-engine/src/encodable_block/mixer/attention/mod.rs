@@ -306,16 +306,8 @@ impl<B: Backend> Attention<B> {
     ) -> Result<(), B::Error> {
         let cache = state.cache();
         let batch_dim = BatchTopology::flat(batch_dim);
-        self.prepare(
-            key_value,
-            &mut MaybeMut::Mut(&mut state.kv),
-            cache,
-            batch_dim.kind(),
-            0,
-            batch_dim.size(),
-            None,
-            command_buffer,
-        )?;
+        let kv = &mut MaybeMut::Mut(&mut state.kv);
+        self.prepare(key_value, kv, cache, batch_dim.kind(), 0, batch_dim.size(), None, command_buffer)?;
         state.encode_accept(&batch_dim, &(0..batch_dim.size()).collect::<Box<[u32]>>(), command_buffer)?;
         Ok(())
     }
@@ -378,6 +370,13 @@ impl<B: Backend> Attention<B> {
                 interleaved_axes: u32::from(rope.interleaved_axes),
             })
         });
+        let rope_position_offset = rope.map(|rope| {
+            if rope.frequency_pairs_per_axis.is_some() {
+                cache.rope_position()
+            } else {
+                cache.context_length()
+            }
+        });
         prepare.encode(
             qkvg,
             &mut query_codes,
@@ -397,7 +396,7 @@ impl<B: Backend> Attention<B> {
             num_q_heads,
             rope.map(|rope| rope.dim),
             rope.map(|rope| rope.scale),
-            rope.map(|_| cache.rope_position()),
+            rope_position_offset,
             rope_grid_params,
             cache.prefix_len(),
             input_row_stride,
@@ -411,20 +410,7 @@ impl<B: Backend> Attention<B> {
     }
 
     fn get_projection_dim(config: &AttentionConfig) -> u32 {
-        let q_dim = config.num_heads * config.head_dim;
-        let kv_dim = if config.is_kv_sharing {
-            0
-        } else {
-            2 * config.num_groups * config.head_dim
-        };
-
-        let gate_dim = if config.has_gate {
-            q_dim
-        } else {
-            0
-        };
-
-        q_dim + kv_dim + gate_dim
+        config.qkvg_head_count() * config.head_dim
     }
 }
 

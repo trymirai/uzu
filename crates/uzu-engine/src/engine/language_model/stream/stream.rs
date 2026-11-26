@@ -26,7 +26,7 @@ use crate::{
         grammar::Grammar,
         state::LanguageModelState,
         stream::{LanguageModelInput, LanguageModelStreamError, LanguageModelStreamOptions},
-        vision::encode::VisionPrefillError,
+        vision::model::VisionEncodeError,
     },
     trie,
     utils::{
@@ -254,42 +254,42 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         // allow on-demand suffix length
         let batch_size = ATTENTION_SUFFIX_CAPACITY as usize;
 
-        let mut input_length = 0;
+        let mut total_input_length = 0;
         let mut max_batch_length = 0;
         let mut number_of_batches = 0;
         for &part in input {
-            let length = match part {
+            let part_length = match part {
                 LanguageModelInput::Tokens(tokens) => tokens.len(),
                 LanguageModelInput::Image(image) => {
-                    let vision = self.model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
-                    vision.image_token_count(image).map_err(VisionPrefillError::<B>::from)?
+                    let vision = self.model.vision_model.as_ref().ok_or(VisionEncodeError::<B>::NoVisionEncoder)?;
+                    vision.image_token_count(image).map_err(VisionEncodeError::<B>::from)?
                 },
             };
-            input_length += length;
-            max_batch_length = max_batch_length.max(length.min(batch_size));
-            number_of_batches += length.div_ceil(batch_size);
+            total_input_length += part_length;
+            max_batch_length = max_batch_length.max(part_length.min(batch_size));
+            number_of_batches += part_length.div_ceil(batch_size);
         }
 
-        if input_length == 0 {
+        if total_input_length == 0 {
             return Err(LanguageModelStreamError::NoSeedToken);
         }
 
         if self.model_state.max_context_length.is_some_and(|limit| {
-            self.model_state.transformer_state.context_length() as usize + input_length > limit as usize
+            self.model_state.transformer_state.context_length() as usize + total_input_length > limit as usize
         }) {
             return Err(LanguageModelStreamError::ContextOverflow);
         }
 
         let mut prefill_parts = input.iter().copied().filter(|part| !matches!(part, LanguageModelInput::Tokens([])));
         let Some(LanguageModelInput::Tokens(last_tokens)) = prefill_parts.next_back() else {
-            return Err(VisionPrefillError::<B>::ImageAtEnd.into());
+            return Err(VisionEncodeError::<B>::ImageAtEnd.into());
         };
 
         // Only the last nonempty text chunk supplies logits for sampling.
         let final_start = (last_tokens.len() - 1) / batch_size * batch_size;
         let (prefix_tokens, mut final_chunk) = last_tokens.split_at(final_start);
         let new_context_length =
-            self.model_state.transformer_state.context_length() + (input_length - final_chunk.len()) as u32;
+            self.model_state.transformer_state.context_length() + (total_input_length - final_chunk.len()) as u32;
         self.model_state
             .transformer_state
             .prepare(new_context_length, max_batch_length as u32)
@@ -306,7 +306,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         command_buffer.debug_point(&format!(
             "prefill at context {}, suffix {} ({} batches)",
             self.model_state.transformer_state.context_length(),
-            input_length,
+            total_input_length,
             number_of_batches
         ));
 
@@ -419,7 +419,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         drop(token_ids);
 
         self.metrics.num_prefill_forward_passes += 1;
-        self.metrics.num_tokens_prefilled += input_length;
+        self.metrics.num_tokens_prefilled += total_input_length;
         self.metrics.num_tokens_proposed += 1;
 
         Ok(GenerationJob::Pending {
@@ -860,10 +860,10 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         image: &VisionImage,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), LanguageModelStreamError<B>> {
-        let vision_model = model.vision_model.as_ref().ok_or(VisionPrefillError::<B>::NoVisionEncoder)?;
+        let vision_model = model.vision_model.as_ref().ok_or(VisionEncodeError::<B>::NoVisionEncoder)?;
 
         let encode_span = CpuSpan::start(options.timestamps.as_ref(), "vision encode");
-        let image = vision_model.prefill(image, command_buffer)?;
+        let image = vision_model.encode(image, command_buffer)?;
         drop(encode_span);
 
         let embedding = model.decoder.embedding();

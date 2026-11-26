@@ -86,6 +86,7 @@ impl KVCacheState {
             }
             self.context_length += 1;
         }
+
         self.rope_position += rope_advance;
         copies
     }

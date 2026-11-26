@@ -1,7 +1,7 @@
 import type { SamplingDefaults } from "@/platform/services/chat";
 import { resolveModelTools, useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
-import { TEMPERATURE_MIN, type SamplingPolicyPayload } from "@/types/sampling";
+import { TEMPERATURE_MIN, TOP_P_MIN, type SamplingPolicyPayload } from "@/types/sampling";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented-control";
@@ -222,7 +222,7 @@ export const ModelParamsControls = ({ repoId, samplingDefaults: modelDefaults }:
               <NumberSliderRow
                 label="Top P"
                 changed={fieldChanged("topP")}
-                min={0}
+                min={Math.min(TOP_P_MIN, stochastic.topP ?? seed.topP)}
                 max={1}
                 step={0.01}
                 decimals={2}

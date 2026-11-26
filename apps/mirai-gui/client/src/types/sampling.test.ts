@@ -6,6 +6,10 @@ describe("normalizeSampling", () => {
     expect(normalizeSampling({ type: "Stochastic", temperature: 0, topK: 40 })).toEqual({ type: "Greedy" });
   });
 
+  it("turns a saved zero top-p into greedy", () => {
+    expect(normalizeSampling({ type: "Stochastic", temperature: 0.7, topP: 0 })).toEqual({ type: "Greedy" });
+  });
+
   it("migrates the old Argmax name without mistaking disabled temperature scaling for greedy", () => {
     expect(normalizeSampling({ type: "Argmax" })).toEqual({ type: "Greedy" });
     expect(normalizeSampling({ type: "Stochastic", temperature: null, topK: null })).toEqual({

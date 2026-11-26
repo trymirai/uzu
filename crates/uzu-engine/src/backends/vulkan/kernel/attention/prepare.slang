@@ -11,10 +11,10 @@ groupshared float prepare_block_mean[ATTENTION_DIMS * SIMD_SIZE];
 
 // A head's input channel: the block mean when the kernel pools blocks of keys, the projected row otherwise.
 ElementT prepare_input<ElementT : IStorageFloat>(
-  Ptr<ElementT, Access.Read> qkvg,
-  uint row,
-  uint channel,
-  bool block_mean
+    Ptr<ElementT, Access.Read> qkvg,
+    uint row,
+    uint channel,
+    bool block_mean
 ) {
   if (block_mean) {
     return ElementT.fromFloat(prepare_block_mean[channel]);
@@ -23,14 +23,14 @@ ElementT prepare_input<ElementT : IStorageFloat>(
 }
 
 float prepare_norm<ElementT : IStorageFloat>(
-  ElementT value,
-  uint channel,
-  float row_scale,
-  Ptr<float, Access.Read> scales,
-  bool has_scales,
-  bool enabled,
-  bool full_layer,
-  float scale_offset
+    ElementT value,
+    uint channel,
+    float row_scale,
+    Ptr<float, Access.Read> scales,
+    bool has_scales,
+    bool enabled,
+    bool full_layer,
+    float scale_offset
 ) {
   if (!enabled) {
     return value.toFloat();
@@ -47,52 +47,53 @@ float prepare_norm<ElementT : IStorageFloat>(
 }
 
 [[Variants("ElementT", "float, bf16")]]
-[[Kernel]] [[Public]]
+[[Kernel]]
+[[Public]]
 [[Precondition("new", "HEAD_DIM == 64 || HEAD_DIM == 128 || HEAD_DIM == 256 || HEAD_DIM == 512")]]
 [[Precondition("new", "num_kv_heads > 0 && backend_opaque_layout == 0")]]
 [[Precondition("encode", "num_q_heads.is_multiple_of(num_kv_heads)")]]
 func AttentionPrepare<ElementT : IStorageFloat>(
-  Ptr<ElementT, Access.Read> qkvg,
-  Ptr<int8_t, Access.ReadWrite> q_codes,
-  Ptr<bf16, Access.ReadWrite> q_scales,
-  [[Optional("append_kv")]] Ptr<int8_t, Access.ReadWrite> k_codes,
-  [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> k_scales,
-  [[Optional("append_kv")]] Ptr<uint8_t, Access.ReadWrite> v_codes,
-  [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> v_scales,
-  [[Optional("has_rope")]] Ptr<float, Access.Read> rope_inverse_frequencies,
-  [[Optional("has_query_norm_scales")]] Ptr<float, Access.Read> query_norm_scales,
-  [[Optional("has_key_norm_scales")]] Ptr<float, Access.Read> key_norm_scales,
-  [[Optional("has_value_norm_scales")]] Ptr<float, Access.Read> value_norm_scales,
-  [[Optional("block_mean")]] Ptr<TrieNode, Access.Read> pool_nodes,
-  [[Optional("block_mean")]] Ptr<int, Access.Read> pool_windows,
-  [[Optional("block_mean")]] Ptr<ElementT, Access.ReadWrite> raw_keys,
-  QKVNormParams norm_params,
-  uint num_q_heads,
-  [[Optional("has_rope")]] uint rope_dim,
-  [[Optional("has_rope")]] float rope_scale,
-  [[Optional("has_rope")]] uint rope_position_offset,
-  [[Optional("has_mrope")]] RoPEGridParams rope_grid,
-  uint kv_token_offset,
-  uint input_row_stride,
-  uint suffix_length,
-  uint query_rows,
-  [[Optional("block_mean")]] uint prefix_tokens,
-  [[Optional("has_trie")]] Ptr<TrieNode, Access.Read> trie,
-  [[Groups("suffix_length")]] uint token,
-  [[Groups("num_q_heads + num_kv_heads * 2")]] uint head,
-  [[Threads("32")]] uint tid,
-  [[Specialize]] uint HEAD_DIM,
-  [[Specialize]] bool has_rope,
-  [[Specialize]] bool has_mrope,
-  [[Specialize]] uint num_kv_heads,
-  [[Specialize]] uint backend_opaque_layout,
-  [[Specialize]] bool append_kv,
-  [[Specialize]] bool has_query_norm_scales,
-  [[Specialize]] bool has_key_norm_scales,
-  [[Specialize]] bool has_value_norm_scales,
-  [[Specialize]] bool block_mean,
-  [[Specialize]] uint compression_ratio,
-  [[Specialize]] bool has_trie,
+    Ptr<ElementT, Access.Read> qkvg,
+    Ptr<int8_t, Access.ReadWrite> q_codes,
+    Ptr<bf16, Access.ReadWrite> q_scales,
+    [[Optional("append_kv")]] Ptr<int8_t, Access.ReadWrite> k_codes,
+    [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> k_scales,
+    [[Optional("append_kv")]] Ptr<uint8_t, Access.ReadWrite> v_codes,
+    [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> v_scales,
+    [[Optional("has_rope")]] Ptr<float, Access.Read> rope_inverse_frequencies,
+    [[Optional("has_query_norm_scales")]] Ptr<float, Access.Read> query_norm_scales,
+    [[Optional("has_key_norm_scales")]] Ptr<float, Access.Read> key_norm_scales,
+    [[Optional("has_value_norm_scales")]] Ptr<float, Access.Read> value_norm_scales,
+    [[Optional("block_mean")]] Ptr<TrieNode, Access.Read> pool_nodes,
+    [[Optional("block_mean")]] Ptr<int, Access.Read> pool_windows,
+    [[Optional("block_mean")]] Ptr<ElementT, Access.ReadWrite> raw_keys,
+    QKVNormParams norm_params,
+    uint num_q_heads,
+    [[Optional("has_rope")]] uint rope_dim,
+    [[Optional("has_rope")]] float rope_scale,
+    [[Optional("has_rope")]] uint rope_position_offset,
+    [[Optional("has_mrope")]] RoPEGridParams rope_grid,
+    uint kv_token_offset,
+    uint input_row_stride,
+    uint suffix_length,
+    uint query_rows,
+    [[Optional("block_mean")]] uint prefix_tokens,
+    [[Optional("has_trie")]] Ptr<TrieNode, Access.Read> trie,
+    [[Groups("suffix_length")]] uint token,
+    [[Groups("num_q_heads + num_kv_heads * 2")]] uint head,
+    [[Threads("32")]] uint tid,
+    [[Specialize]] uint HEAD_DIM,
+    [[Specialize]] bool has_rope,
+    [[Specialize]] bool has_mrope,
+    [[Specialize]] uint num_kv_heads,
+    [[Specialize]] uint backend_opaque_layout,
+    [[Specialize]] bool append_kv,
+    [[Specialize]] bool has_query_norm_scales,
+    [[Specialize]] bool has_key_norm_scales,
+    [[Specialize]] bool has_value_norm_scales,
+    [[Specialize]] bool block_mean,
+    [[Specialize]] uint compression_ratio,
+    [[Specialize]] bool has_trie,
 ) {
   static_assert(SIMD_SIZE == 32, "Threads(32)");
   let is_query = head < num_q_heads;
@@ -111,19 +112,6 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   let has_scales = is_query ? has_query_norm_scales : is_key ? has_key_norm_scales : has_value_norm_scales;
   let scales = is_query ? query_norm_scales : is_key ? key_norm_scales : value_norm_scales;
   let row = token * input_row_stride + head * HEAD_DIM;
-  // Trie nodes sit at their depth below the root, not at their row in the suffix.
-  var rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
-  var grid_row = 0u;
-  var grid_column = 0u;
-  if (has_mrope) {
-    // Rows are cells of grids in raster order: a text token is a 1x1 grid.
-    let cell = rope_grid.first_cell + (has_trie ? trie[token].height : token);
-    let grid_size = rope_grid.grid_width * rope_grid.grid_height;
-    rope_position = rope_position_offset + cell / grid_size * max(rope_grid.grid_width, rope_grid.grid_height);
-    let patch = vision_patch_coordinates(cell % grid_size, rope_grid.grid_width, rope_grid.merge_size);
-    grid_row = patch.y;
-    grid_column = patch.x;
-  }
   if (block_mean) {
     // raw_keys: the open block's cached rows, then one row per suffix node.
     let block_start = prefix_tokens - prefix_tokens % compression_ratio;
@@ -160,6 +148,21 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     row_scale = op == uint(QKVL2Op::Clip) ? min(1.0, norm_params.clip_threshold[norm] / (sqrt(sum_squares) + epsilon))
                                           : rsqrt(sum_squares / float(HEAD_DIM) + epsilon);
   }
+
+  // Trie nodes sit at their depth below the root, not at their row in the suffix.
+  var rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
+  var grid_row = 0u;
+  var grid_column = 0u;
+  if (has_mrope) {
+    // Rows are cells of grids in raster order: a text token is a 1x1 grid.
+    let cell = rope_grid.first_cell + (has_trie ? trie[token].height : token);
+    let grid_size = rope_grid.grid_width * rope_grid.grid_height;
+    rope_position = rope_position_offset + cell / grid_size * max(rope_grid.grid_width, rope_grid.grid_height);
+    let patch = vision_patch_coordinates(cell % grid_size, rope_grid.grid_width, rope_grid.merge_size);
+    grid_row = patch.y;
+    grid_column = patch.x;
+  }
+
   float values[ATTENTION_DIMS];
   for (uint a = 0; a < dims; a++) {
     let channel = first + a;
@@ -170,17 +173,17 @@ func AttentionPrepare<ElementT : IStorageFloat>(
       let paired_channel = channel < half ? channel + half : channel - half;
       let paired_input = prepare_input(qkvg, row, paired_channel, block_mean);
       let paired =
-        prepare_norm(paired_input, paired_channel, row_scale, scales, has_scales, enabled, full_layer, scale_offset);
+          prepare_norm(paired_input, paired_channel, row_scale, scales, has_scales, enabled, full_layer, scale_offset);
       var position = rope_position;
       if (has_mrope) {
         position += mrope_axis_offset(
-          channel % half,
-          half,
-          grid_row,
-          grid_column,
-          rope_grid.height_pairs,
-          rope_grid.width_pairs,
-          rope_grid.interleaved_axes != 0
+            channel % half,
+            half,
+            grid_row,
+            grid_column,
+            rope_grid.height_pairs,
+            rope_grid.width_pairs,
+            rope_grid.interleaved_axes != 0
         );
       }
       let rotated = rope_rotate(element, paired, rope_inverse_frequencies, rope_scale, position, channel, rope_dim);

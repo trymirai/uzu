@@ -81,9 +81,7 @@ impl<B: Backend> LinearMatmul<B> {
         context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
-            if !matches!(data_type, DataType::BF16 | DataType::F32) {
-                return Err(LinearMatmulError::UnsupportedDataType(data_type));
-            }
+            Self::ensure_data_type_supported(data_type)?;
         }
 
         let matrix =
@@ -121,9 +119,7 @@ impl<B: Backend> LinearMatmul<B> {
         biases: Option<B::GlobalGpuBuffer>,
         context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
-        if !matches!(data_type, DataType::BF16 | DataType::F32) {
-            return Err(LinearMatmulError::UnsupportedDataType(data_type));
-        }
+        Self::ensure_data_type_supported(data_type)?;
         let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
             .map_err(LinearMatmulError::Matmul)?;
         Ok(Self {
@@ -239,6 +235,13 @@ impl<B: Backend> LinearMatmul<B> {
             bias: self.biases.as_ref(),
             rht_factors: self.output_hadamard_factors.as_ref(),
             ..MatmulDOps::none()
+        }
+    }
+
+    fn ensure_data_type_supported(data_type: DataType) -> Result<(), LinearMatmulError<B>> {
+        match matches!(data_type, DataType::BF16 | DataType::F32) {
+            true => Ok(()),
+            false => Err(LinearMatmulError::UnsupportedDataType(data_type)),
         }
     }
 }
