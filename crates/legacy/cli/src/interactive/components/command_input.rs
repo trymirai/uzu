@@ -157,7 +157,7 @@ fn hint_component(
             hints.push(HINT_SEND.to_string());
         },
     }
-    if state.read().model_state.as_ref().is_some_and(|model_state| model_state.model.is_chat_capable()) {
+    if state.read().model_state.as_ref().is_some_and(|model_state| model_state.model.is_vision_capable()) {
         hints.push(HINT_CHAT_IMAGE.to_string());
     }
     hints.push(HINT_COMMANDS.to_string());
