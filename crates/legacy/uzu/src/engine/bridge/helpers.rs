@@ -170,6 +170,21 @@ fn get_custom_sampling_method(method: &ShojiSamplingMethod) -> Result<UzuSamplin
                     "stochastic sampling needs temperature > 0, got {temperature}, use greedy sampling instead"
                 ));
             }
+            if let Some(top_k) = top_k
+                && *top_k < 1
+            {
+                return Err(format!("top_k must be >= 1, got {top_k}, leave it unset to disable it"));
+            }
+            if let Some(top_p) = top_p
+                && !(*top_p > 0.0 && *top_p <= 1.0)
+            {
+                return Err(format!("top_p must be > 0 and <= 1, got {top_p}"));
+            }
+            if let Some(min_p) = min_p
+                && !(0.0..=1.0).contains(min_p)
+            {
+                return Err(format!("min_p must be >= 0 and <= 1, got {min_p}"));
+            }
             if let Some(repetition_penalty) = repetition_penalty
                 && (repetition_penalty.is_nan() || *repetition_penalty <= 0.0)
             {
@@ -485,6 +500,50 @@ mod sampling_tests {
         for (penalty, suffix) in [(Some(1.1), Some(64)), (None, None), (None, Some(64))] {
             assert!(matches!(
                 get_custom_sampling_method(&with_repetition(penalty, suffix)),
+                Ok(UzuSamplingMethod::Stochastic { .. })
+            ));
+        }
+    }
+
+    fn with_filters(
+        top_k: Option<i64>,
+        top_p: Option<f64>,
+        min_p: Option<f64>,
+    ) -> ShojiSamplingMethod {
+        ShojiSamplingMethod::Stochastic {
+            temperature: Some(0.7),
+            top_k,
+            top_p,
+            min_p,
+            repetition_penalty: None,
+            suffix_repetition_length: None,
+        }
+    }
+
+    #[test]
+    fn stochastic_rejects_invalid_filters() {
+        for (top_k, top_p, min_p) in [
+            (Some(0), None, None),
+            (Some(-1), None, None),
+            (None, Some(0.0), None),
+            (None, Some(1.1), None),
+            (None, Some(f64::NAN), None),
+            (None, None, Some(-0.1)),
+            (None, None, Some(1.1)),
+            (None, None, Some(f64::NAN)),
+        ] {
+            assert!(
+                get_custom_sampling_method(&with_filters(top_k, top_p, min_p)).is_err(),
+                "{top_k:?} {top_p:?} {min_p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stochastic_accepts_valid_filters() {
+        for (top_k, top_p, min_p) in [(Some(1), Some(1.0), Some(0.0)), (None, None, Some(1.0))] {
+            assert!(matches!(
+                get_custom_sampling_method(&with_filters(top_k, top_p, min_p)),
                 Ok(UzuSamplingMethod::Stochastic { .. })
             ));
         }

@@ -161,6 +161,25 @@ it.each([null, 0.01, 1.5])(
   },
 );
 
+it("shows a model Top P below the floor without clamping it", async () => {
+  render(<ModelParamsControls repoId="model" samplingDefaults={{ ...samplingDefaults, topP: 0.01 }} />);
+  await act(async () => {});
+  const input = screen.getByRole("textbox", { name: "Top P" }) as HTMLInputElement;
+  expect(input.value).toBe("0.01");
+  fireEvent.blur(input);
+  expect(useModelParamsStore.getState().paramsByRepoId).toEqual({});
+});
+
+it("raises a typed Top P of 0 to the floor", async () => {
+  render(<ModelParamsControls repoId="model" samplingDefaults={samplingDefaults} />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("checkbox", { name: "Enable Top P" }));
+  const input = screen.getByRole("textbox", { name: "Top P" });
+  fireEvent.change(input, { target: { value: "0" } });
+  fireEvent.blur(input);
+  expect(useModelParamsStore.getState().getParams("model").sampling).toEqual({ ...samplingDefaults, topP: 0.05 });
+});
+
 it("shows no invented default while metadata is unavailable", async () => {
   render(<ModelParamsControls repoId="model" samplingDefaults={null} />);
   await act(async () => {});

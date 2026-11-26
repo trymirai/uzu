@@ -16,6 +16,7 @@ const TEMPERATURE_MIN: f64 = TEMPERATURE_STEP;
 const TEMPERATURE_MAX: f64 = 2.0;
 const PROBABILITY_STEP: f64 = 0.05;
 const PROBABILITY_MAX: f64 = 1.0;
+const TOP_P_MIN: f64 = PROBABILITY_STEP;
 const TOP_K_STEP: i64 = 1;
 const TOP_K_MIN: i64 = 1;
 const TOP_K_MAX: i64 = 4096;
@@ -94,7 +95,7 @@ fn adjust(
         },
         Field::TopP => {
             preferences.sampling.top_p =
-                step_f64(preferences.sampling.top_p, delta, PROBABILITY_STEP, 0.0, PROBABILITY_MAX);
+                step_f64(preferences.sampling.top_p, delta, PROBABILITY_STEP, TOP_P_MIN, PROBABILITY_MAX);
         },
         Field::MinP => {
             preferences.sampling.min_p =
@@ -131,8 +132,14 @@ fn toggle(
             toggle_value(&mut sampling.temperature_enabled, &mut sampling.temperature, defaults.temperature);
             sampling.temperature = sampling.temperature.max(TEMPERATURE_MIN);
         },
-        Field::TopK => toggle_value(&mut sampling.top_k_enabled, &mut sampling.top_k, defaults.top_k),
-        Field::TopP => toggle_value(&mut sampling.top_p_enabled, &mut sampling.top_p, defaults.top_p),
+        Field::TopK => {
+            toggle_value(&mut sampling.top_k_enabled, &mut sampling.top_k, defaults.top_k);
+            sampling.top_k = sampling.top_k.max(TOP_K_MIN);
+        },
+        Field::TopP => {
+            toggle_value(&mut sampling.top_p_enabled, &mut sampling.top_p, defaults.top_p);
+            sampling.top_p = sampling.top_p.max(TOP_P_MIN);
+        },
         Field::MinP => toggle_value(&mut sampling.min_p_enabled, &mut sampling.min_p, defaults.min_p),
         Field::RepetitionPenalty => {
             toggle_value(
