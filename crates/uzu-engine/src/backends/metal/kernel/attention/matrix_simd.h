@@ -5,6 +5,7 @@
 #include "kv_layout.h"
 #include "mask.h"
 #include "matrix_layout.h"
+#include "rotated_output.h"
 
 using namespace uzu::matmul;
 
@@ -89,11 +90,18 @@ METAL_FUNC void attention_matrix_simd(
     device bfloat* partial_values,
     device float* partial_maxima,
     device float* partial_denominators,
+    device bfloat* output_rows,
+    const device bfloat* gate,
+    uint gate_row_stride,
+    const device bfloat* sinks,
     const constant uzu::attention::AttnParams& params,
     uint query_tiles,
     uint num_splits,
     uint trie_nodes,
     bool is_trie,
+    bool is_split,
+    bool has_gate,
+    bool has_sinks,
     const device int* selected_blocks,
     uint blocks_per_query,
     uint compression_ratio,
@@ -107,7 +115,7 @@ METAL_FUNC void attention_matrix_simd(
 ) {
   using Scratch = AttentionMatrixScratch<HEAD_DIM, false, NUM_SIMDGROUPS, IS_SPARSE>;
   constexpr uint BK = Scratch::SIMD_KEYS;
-  constexpr uint SLICES = HEAD_DIM < 128 ? 1 : HEAD_DIM / 128;
+  constexpr uint SLICES = Scratch::SIMD_SLICES;
   constexpr uint BLOCK_ROWS = NUM_SIMDGROUPS / SLICES * 8;
   using Layout = AttentionMatrixLayout<BK, HEAD_DIM, SLICES, false>;
   using Ops = SimdgroupFragmentOps;
@@ -156,16 +164,6 @@ METAL_FUNC void attention_matrix_simd(
     );
   }
 
-  ulong trie_mask = 0ul;
-  if (is_trie && !IS_SPARSE) {
-    for (uint node_index = 0; node_index < min(trie_nodes, 64u); ++node_index) {
-      const auto node = trie[node_index];
-      if (query_position >= node.trie_start && query_position <= node.trie_end) {
-        trie_mask |= 1ul << node_index;
-      }
-    }
-  }
-
   const SparseKeys sparse_keys(
       selected_blocks,
       blocks_per_query,
@@ -176,16 +174,24 @@ METAL_FUNC void attention_matrix_simd(
       query_tile,
       IS_SPARSE && is_trie
   );
-  const uint num_blocks = ((IS_SPARSE ? sparse_keys.key_count() : params.k_len) + BK - 1) / BK;
-  const uint block_begin = split * num_blocks / num_splits;
-  const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : params.q_off;
-  const uint logical_query = suffix_position + (is_trie ? trie[query_position].height : query_position);
+  const uint prefix_length = params.q_off;
+  const uint ring_offset = is_kv_cache_ring ? ring_params.ring_offset : 0u;
+  const KeyWindow window = KeyWindow::make(is_causal, is_sliding_window, sliding_window_size);
   const uint tile_first = query_tile * BLOCK_ROWS;
   const uint tile_last = min(tile_first + BLOCK_ROWS - 1u, grouped_rows - 1u);
-  const uint last_query =
-      tile_first / params.q_len == tile_last / params.q_len ? tile_last % params.q_len : params.q_len - 1u;
-  const uint block_end = is_causal ? min((split + 1u) * num_blocks / num_splits, (params.q_off + last_query + BK) / BK)
-                                   : (split + 1u) * num_blocks / num_splits;
+  const VisibleKeyBlocks visible = VisibleKeyBlocks::make<BK>(
+      window,
+      is_causal,
+      prefix_length,
+      ring_offset,
+      IS_SPARSE || !(is_kv_cache_ring || is_sliding_window),
+      tile_query_range(tile_first, tile_last, params.q_len, is_trie)
+  );
+  const uint total =
+      IS_SPARSE ? div_ceil(sparse_keys.key_count(), BK) : visible.count_until(div_ceil(params.k_len, BK));
+  const uint2 split_blocks = visible.split(total, split, num_splits);
+  const uint oldest_visible =
+      window.oldest_visible(prefix_length, is_trie && is_sliding_window ? trie[query_position].height : query_position);
   Output output;
   output.clear();
   float running_max = -INFINITY;
@@ -195,14 +201,19 @@ METAL_FUNC void attention_matrix_simd(
   threadgroup float* chunk_key_scales = reinterpret_cast<threadgroup float*>(chunk_rows + Scratch::CHUNK_KEYS);
   threadgroup float* chunk_value_scales = chunk_key_scales + Scratch::CHUNK_KEYS;
 
-  for (uint block = block_begin; block < block_end; ++block) {
-    const uint key_base = block * BK;
+  for (uint block = split_blocks.x; block < split_blocks.y; ++block) {
+    const uint key_base = visible.block_at(block) * BK;
     const uint thread_index = simdgroup * METAL_SIMD_SIZE + lane;
     const uint first_vector = thread_index * (IS_SPARSE ? GATHER_GROUP : 1);
-    const uint chunk_offset = (block - block_begin) % (Scratch::CHUNK_KEYS / BK) * BK;
+    const uint chunk_offset = (block - split_blocks.x) % (Scratch::CHUNK_KEYS / BK) * BK;
     if (chunk_offset == 0) {
       for (uint k = thread_index; k < Scratch::CHUNK_KEYS; k += THREADS) {
-        const uint slot = IS_SPARSE ? sparse_keys.slot(key_base + k) : key_base + k;
+        const uint chunk_block = block + k / BK;
+        const uint key = visible.block_at(chunk_block) * BK + k % BK;
+        uint slot = uzu::kv_layout::NO_KEY_SLOT;
+        if (chunk_block < split_blocks.y) {
+          slot = IS_SPARSE ? sparse_keys.slot(key) : key;
+        }
         const int row = slot < params.k_len ? int(shape.scale_index(slot, kv_head_index)) : uzu::kv_layout::NO_KEY_SLOT;
         chunk_rows[k] = row;
         chunk_key_scales[k] = row >= 0 ? float(key_scales[row]) : 0.0f;
@@ -242,7 +253,9 @@ METAL_FUNC void attention_matrix_simd(
       keys.load_from(lane, fragment_source(kv_tile + channel_base + depth * Ops::FRAGMENT_ROWS, int(HEAD_DIM + 8)));
       fragment_mma(scores, queries[depth], keys);
     }
-    scores.store(lane, score_slot, int(BK));
+    if constexpr (SLICES > 1) {
+      scores.store(lane, score_slot, int(BK));
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     METAL_PRAGMA_UNROLL
     for (ushort other = 1; other < SLICES; ++other) {
@@ -264,34 +277,28 @@ METAL_FUNC void attention_matrix_simd(
     scores.map_coords(lane, [&](short, short col, float score) {
       return score * chunk_key_scales[chunk_offset + col];
     });
-    if (IS_SPARSE || is_kv_cache_ring || is_sliding_window || key_base + BK > params.q_off) {
-      scores.map_coords(lane, [&](short, short col, float score) {
-        const uint key = key_base + uint(col);
-        bool visible = chunk_rows[chunk_offset + col] >= 0;
-        if (visible && !IS_SPARSE) {
-          if (!is_kv_cache_ring && !is_sliding_window && is_causal && trie_nodes <= 64) {
-            if (key >= params.q_off) {
-              visible =
-                  is_trie ? ((trie_mask >> (key - params.q_off)) & 1ul) != 0ul : key <= params.q_off + query_position;
+    if (IS_SPARSE || is_sliding_window || key_base + BK > prefix_length) {
+      scores.for_each_lane([&](ushort, ushort lane_col, thread float& score) {
+        const uint col = lane_col / Ops::THREAD_ELEMENT_COLS * Ops::FRAGMENT_COLS + uint(position.x) +
+                         lane_col % Ops::THREAD_ELEMENT_COLS;
+        bool visible;
+        if constexpr (IS_SPARSE) {
+          visible = chunk_rows[chunk_offset + col] >= 0;
+        } else {
+          const uint key = key_base + col;
+          uint key_position = position_of_key(key, params.k_len, prefix_length, ring_offset);
+          RowRange seeing_rows = RowRange::all();
+          if (is_trie && key >= prefix_length && key < params.k_len) {
+            const auto node = trie[key - prefix_length];
+            seeing_rows = RowRange::make(node.trie_start, node.trie_end);
+            if (is_sliding_window) {
+              key_position = prefix_length + node.height;
             }
-          } else {
-            visible = should_use_key(
-                ring_params,
-                trie,
-                sliding_window_size,
-                query_position,
-                params.q_off,
-                suffix_position,
-                logical_query,
-                key,
-                is_kv_cache_ring,
-                is_causal,
-                is_trie,
-                is_sliding_window
-            );
           }
+          visible = window.sees(oldest_visible, key_position) &&
+                    (!(is_trie && is_causal) || seeing_rows.contains(query_position));
         }
-        return visible ? score : -INFINITY;
+        score = visible ? score : -INFINITY;
       });
     }
     float block_max;
@@ -331,6 +338,46 @@ METAL_FUNC void attention_matrix_simd(
     threadgroup_barrier(mem_flags::mem_threadgroup);
   }
 
+  if constexpr (SLICES == 1) {
+    if (!IS_SPARSE && !is_split) {
+      threadgroup bfloat* tile_values = reinterpret_cast<threadgroup bfloat*>(kv_tile);
+      threadgroup float2* tile_stats = reinterpret_cast<threadgroup float2*>(row_masks);
+      output.store(lane, tile_values + band * Ops::FRAGMENT_ROWS * HEAD_DIM, int(HEAD_DIM));
+      if (position.x == 0) {
+        tile_stats[band * Ops::FRAGMENT_ROWS + position.y] = float2(running_max, denominator);
+      }
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      constexpr ushort VALUES_PER_LANE = HEAD_DIM / METAL_SIMD_SIZE;
+      for (uint row = simdgroup; row < BLOCK_ROWS; row += NUM_SIMDGROUPS) {
+        const uint grouped_row = tile_first + row;
+        if (grouped_row >= grouped_rows) {
+          continue;
+        }
+        const float2 stats = tile_stats[row];
+        float rotated[VALUES_PER_LANE];
+        METAL_PRAGMA_UNROLL
+        for (ushort value_index = 0; value_index < VALUES_PER_LANE; ++value_index) {
+          rotated[value_index] = float(tile_values[row * HEAD_DIM + value_index * METAL_SIMD_SIZE + lane]);
+        }
+        store_output_row<bfloat, HEAD_DIM>(
+            lane,
+            rotated,
+            stats.x,
+            stats.y,
+            sinks,
+            has_sinks,
+            output_rows,
+            gate,
+            params,
+            kv_head_index,
+            grouped_row,
+            gate_row_stride,
+            has_gate
+        );
+      }
+      return;
+    }
+  }
   const uint partial_row = (split * num_kv_heads + kv_head_index) * query_tiles * BLOCK_ROWS + row_base;
   output.store(lane, partial_values + size_t(partial_row) * HEAD_DIM + channel_base, int(query_row_step * HEAD_DIM));
   if (slice == 0 && position.x == 0) {

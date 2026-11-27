@@ -30,36 +30,28 @@ pub struct AttentionMetalKernel {
     sparse: Option<(u32, u32, [AttentionMatrixMetalKernel; 2])>,
 }
 
+struct MaskKernels {
+    split: AttentionMatrixMetalKernel,
+    output: Option<AttentionMatrixMetalKernel>,
+}
+
 struct KernelTile {
     rows: u32,
     simdgroups: u32,
     mask_free_split: Option<AttentionMatrixMetalKernel>,
-    masked_split: AttentionMatrixMetalKernel,
-    trie_split: AttentionMatrixMetalKernel,
-    masked: Option<AttentionMatrixMetalKernel>,
-    trie: Option<AttentionMatrixMetalKernel>,
+    masked: MaskKernels,
+    trie: MaskKernels,
 }
 
 impl KernelTile {
-    fn output(
+    fn kernels(
         &self,
         is_trie: bool,
-    ) -> Option<&AttentionMatrixMetalKernel> {
+    ) -> &MaskKernels {
         if is_trie {
-            self.trie.as_ref()
+            &self.trie
         } else {
-            self.masked.as_ref()
-        }
-    }
-
-    fn split(
-        &self,
-        is_trie: bool,
-    ) -> &AttentionMatrixMetalKernel {
-        if is_trie {
-            &self.trie_split
-        } else {
-            &self.masked_split
+            &self.masked
         }
     }
 }
@@ -88,7 +80,8 @@ impl AttentionMetalKernel {
         };
         let mut tiles = Vec::new();
         for simdgroups in [1, 2, 4, 6, 8] {
-            if simdgroups % slices != 0 {
+            // Non-MXU: the one-simdgroup tile spills; two simdgroups cover its rows.
+            if simdgroups % slices != 0 || (!use_mxu && simdgroups == 1) {
                 continue;
             }
             let kernel = |mask_free, is_trie, is_split: bool| {
@@ -111,16 +104,20 @@ impl AttentionMetalKernel {
                     None,
                 )
             };
-            // TODO: simdgroup (pre-M5) kernels have no no-split path yet, so without MXU every call writes partials.
-            let output = |is_trie| use_mxu.then(|| kernel(false, is_trie, false)).transpose();
+            // Simd output: bf16 only, no head slicing (costs M2 occupancy).
+            let writes_output = use_mxu || (slices == 1 && config.data_type == DataType::BF16);
+            let kernels = |is_trie| -> Result<MaskKernels, MetalError> {
+                Ok(MaskKernels {
+                    split: kernel(false, is_trie, true)?,
+                    output: writes_output.then(|| kernel(false, is_trie, false)).transpose()?,
+                })
+            };
             let plain_causal = use_mxu && !config.is_kv_cache_ring && config.sliding_window_size.is_none();
             tiles.push(KernelTile {
                 simdgroups,
                 rows: tile_rows(simdgroups),
-                masked: output(false)?,
-                trie: output(true)?,
-                masked_split: kernel(false, false, true)?,
-                trie_split: kernel(false, true, true)?,
+                masked: kernels(false)?,
+                trie: kernels(true)?,
                 mask_free_split: plain_causal.then(|| kernel(true, false, true)).transpose()?,
             });
         }
@@ -322,18 +319,21 @@ impl AttentionKernel for AttentionMetalKernel {
         } else {
             let threadgroups =
                 tile.map_or(split_rows.div_ceil(4 * vector_queries), |tile| num_groups * (padded_rows / tile.rows));
+            let useful_simdgroups =
+                tile.map(|tile| (tile.simdgroups * grouped_rows.min(tile.rows)).div_ceil(tile.rows));
             policy::splits(
                 &params,
                 head_dim,
                 split_rows,
                 command_buffer.context().gpu_core_count.max(1),
                 threadgroups,
-                tile.map(|tile| tile.simdgroups),
+                useful_simdgroups,
                 self.use_mxu,
+                config.sliding_window_size,
             )
         };
 
-        let output_kernel = tile.and_then(|tile| tile.output(trie.is_some()));
+        let output_kernel = tile.and_then(|tile| tile.kernels(trie.is_some()).output.as_ref());
         let is_split = !direct && (sparse.is_some() || num_splits > 1 || output_kernel.is_none());
         let rows = split_rows * num_splits;
         let data_type = if direct {
@@ -393,9 +393,9 @@ impl AttentionKernel for AttentionMetalKernel {
                     .count() as u32
             });
             for (kernel, trie, split_base, split_count) in [
-                (prefix.unwrap_or(&tile.masked_split), None, 0, prefix_splits),
+                (prefix.unwrap_or(&tile.masked.split), None, 0, prefix_splits),
                 (
-                    output_kernel.filter(|_| !is_split).unwrap_or(tile.split(trie.is_some())),
+                    output_kernel.filter(|_| !is_split).unwrap_or(&tile.kernels(trie.is_some()).split),
                     trie,
                     prefix_splits,
                     num_splits - prefix_splits,
