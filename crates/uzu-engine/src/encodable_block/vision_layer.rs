@@ -17,7 +17,10 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{LinearMatmul, LinearMatmulError},
-        mixer::attention::{Attention, AttentionEncodeError, AttentionNewError, rope::RoPE},
+        mixer::attention::{
+            Attention, AttentionEncodeError, AttentionNewError,
+            rope::{RoPE, RoPEAxes},
+        },
         mlp::{MlpEncodeError, UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
     },
@@ -307,7 +310,10 @@ fn create_vision_rope<B: Backend>(
         .collect();
     Ok(RoPE {
         // The first half of the pairs rotates by the patch row, the second by its column
-        frequency_pairs_per_axis: Some([0, frequency_count, frequency_count]),
+        axes: RoPEAxes::ContiguousGrid {
+            height_pairs: frequency_count,
+            width_pairs: frequency_count,
+        },
         ..RoPE::from_inverse_frequencies(&inverse_frequencies, 1.0, rope_config.head_dim, u32::MAX, context)?
     })
 }

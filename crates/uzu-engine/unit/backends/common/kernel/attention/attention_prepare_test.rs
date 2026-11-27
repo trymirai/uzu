@@ -13,7 +13,10 @@ use crate::{
         kernel::AttentionPrepareKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, mixer::attention::rope::RoPE},
+    encodable_block::{
+        batch_topology::BatchTopology,
+        mixer::attention::rope::{RoPE, RoPEAxes},
+    },
     tests::{
         attention::kv_layout,
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_backend},
@@ -330,14 +333,12 @@ fn check_mrope<B: Backend>(
 /// Kernel kind and grid the attention block passes to the kernel for `batch`
 fn grid_params<B: Backend>(
     context: &B::Context,
-    frequency_pairs_per_axis: [u32; 3],
-    interleaved_axes: bool,
+    pairs: u32,
+    axes: RoPEAxes,
     batch: BatchTopology<B>,
 ) -> (RoPEKind, RoPEGridParams) {
-    let pairs = frequency_pairs_per_axis.iter().sum::<u32>();
     let rope = RoPE {
-        frequency_pairs_per_axis: Some(frequency_pairs_per_axis),
-        interleaved_axes,
+        axes,
         ..RoPE::from_inverse_frequencies(&vec![1.0; pairs as usize], 1.0, 2 * pairs, 1, context).unwrap()
     };
     (rope.kind(), rope.grid_params(batch.kind()).unwrap())
@@ -351,7 +352,17 @@ fn test_attention_prepare_mrope() {
         (1..3 * 11).step_by(3).for_each(|pair| axes[pair] = 1);
         (2..3 * 10).step_by(3).for_each(|pair| axes[pair] = 2);
         let context = block_on(<B as Backend>::Context::new()).unwrap();
-        let decoder_grid = |batch| grid_params::<B>(&context, [11, 11, 10], true, batch);
+        let decoder_grid = |batch| {
+            grid_params::<B>(
+                &context,
+                32,
+                RoPEAxes::InterleavedGrid {
+                    height_pairs: 11,
+                    width_pairs: 10,
+                },
+                batch,
+            )
+        };
         // An image sits at one position, its cells go in raster order
         let image: Vec<[u32; 3]> = (0..15).map(|cell| [7, 7 + cell / 5, 7 + cell % 5]).collect();
         check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::image(5, 3, 1, 0..15)), 7, &image);
@@ -362,7 +373,15 @@ fn test_attention_prepare_mrope() {
 
         // Vision encoder: the first half of the pairs rotates by the row, the second by the column
         let axes = [[1; 18], [2; 18]].concat();
-        let vision_grid = grid_params::<B>(&context, [0, 18, 18], false, BatchTopology::image(6, 4, 2, 0..24));
+        let vision_grid = grid_params::<B>(
+            &context,
+            36,
+            RoPEAxes::ContiguousGrid {
+                height_pairs: 18,
+                width_pairs: 18,
+            },
+            BatchTopology::image(6, 4, 2, 0..24),
+        );
         // Patches go block by block, each 2x2 block in raster order
         let mut patches = Vec::new();
         for block_row in 0..2 {

@@ -18,7 +18,10 @@ use crate::{
     encodable_block::{
         batch_topology::{BatchKind, BatchTopology},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::RoPE},
+        mixer::{
+            Mixer, MixerEncodeError, MixerState,
+            attention::rope::{RoPE, RoPEAxes},
+        },
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -348,12 +351,9 @@ impl<B: Backend> Attention<B> {
         };
 
         let rope_grid_params = rope.and_then(|rope| rope.grid_params(batch_kind));
-        let rope_position_offset = rope.map(|rope| {
-            if rope.frequency_pairs_per_axis.is_some() {
-                cache.rope_position()
-            } else {
-                cache.context_length()
-            }
+        let rope_position_offset = rope.map(|rope| match rope.axes {
+            RoPEAxes::Sequential => cache.context_length(),
+            _ => cache.rope_position(),
         });
         prepare.encode(
             qkvg,

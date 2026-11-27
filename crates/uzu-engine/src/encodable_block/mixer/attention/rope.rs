@@ -7,13 +7,25 @@ use crate::{
     encodable_block::batch_topology::BatchKind,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoPEAxes {
+    Sequential,
+    ContiguousGrid {
+        height_pairs: u32,
+        width_pairs: u32,
+    },
+    InterleavedGrid {
+        height_pairs: u32,
+        width_pairs: u32,
+    },
+}
+
 pub struct RoPE<B: Backend> {
     pub inverse_frequencies: B::GlobalGpuBuffer,
     pub scale: f32,
     pub dim: u32,
     pub max_sequence_length: u32,
-    pub frequency_pairs_per_axis: Option<[u32; 3]>,
-    pub interleaved_axes: bool,
+    pub axes: RoPEAxes,
 }
 
 impl<B: Backend> RoPE<B> {
@@ -96,11 +108,16 @@ impl<B: Backend> RoPE<B> {
         }
 
         Ok(Self {
-            frequency_pairs_per_axis: match rope_config {
-                AnyRoPEConfig::MultimodalRoPEConfig(config) => Some(config.frequency_pairs_per_axis),
-                _ => None,
+            axes: match rope_config {
+                AnyRoPEConfig::MultimodalRoPEConfig(config) => {
+                    let [_, height_pairs, width_pairs] = config.frequency_pairs_per_axis;
+                    RoPEAxes::InterleavedGrid {
+                        height_pairs,
+                        width_pairs,
+                    }
+                },
+                _ => RoPEAxes::Sequential,
             },
-            interleaved_axes: true,
             ..Self::from_inverse_frequencies(
                 &inverse_frequencies,
                 scale,
@@ -127,16 +144,19 @@ impl<B: Backend> RoPE<B> {
             scale,
             dim,
             max_sequence_length,
-            frequency_pairs_per_axis: None,
-            interleaved_axes: false,
+            axes: RoPEAxes::Sequential,
         })
     }
 
     pub fn kind(&self) -> RoPEKind {
-        match (self.frequency_pairs_per_axis, self.interleaved_axes) {
-            (None, _) => RoPEKind::Sequential,
-            (Some(_), false) => RoPEKind::ContiguousGrid,
-            (Some(_), true) => RoPEKind::InterleavedGrid,
+        match self.axes {
+            RoPEAxes::Sequential => RoPEKind::Sequential,
+            RoPEAxes::ContiguousGrid {
+                ..
+            } => RoPEKind::ContiguousGrid,
+            RoPEAxes::InterleavedGrid {
+                ..
+            } => RoPEKind::InterleavedGrid,
         }
     }
 
@@ -144,7 +164,17 @@ impl<B: Backend> RoPE<B> {
         &self,
         batch_kind: &BatchKind<B>,
     ) -> Option<RoPEGridParams> {
-        let [_, height_pairs, width_pairs] = self.frequency_pairs_per_axis?;
+        let (RoPEAxes::ContiguousGrid {
+            height_pairs,
+            width_pairs,
+        }
+        | RoPEAxes::InterleavedGrid {
+            height_pairs,
+            width_pairs,
+        }) = self.axes
+        else {
+            return None;
+        };
         let (grid_width, grid_height, merge_size, first_cell) = match batch_kind {
             &BatchKind::Image {
                 width,
