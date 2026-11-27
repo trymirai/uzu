@@ -4,7 +4,7 @@ use crate::{
         gpu_types::rope::{RoPEGridParams, RoPEKind},
     },
     config::rope::AnyRoPEConfig,
-    encodable_block::batch_topology::BatchKind,
+    encodable_block::{batch_topology::BatchKind, cell_grid::CellGrid},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,22 +175,20 @@ impl<B: Backend> RoPE<B> {
         else {
             return None;
         };
-        let (grid_width, grid_height, merge_size, first_cell) = match batch_kind {
+        let (grid, first_cell) = match batch_kind {
             &BatchKind::Image {
-                width,
-                height,
-                merge_size,
+                grid,
                 first_cell,
-            } => (width, height, merge_size, first_cell),
-            _ => (1, 1, 1, 0),
+            } => (grid, first_cell),
+            _ => (CellGrid::new(1, 1, 1), 0),
         };
         Some(RoPEGridParams {
-            grid_width,
-            grid_height,
+            grid_width: grid.width,
+            grid_height: grid.height,
             first_cell,
             height_pairs,
             width_pairs,
-            merge_size,
+            merge_size: grid.merge_size,
         })
     }
 }

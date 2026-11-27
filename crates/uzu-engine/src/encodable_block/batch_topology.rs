@@ -1,13 +1,12 @@
 use std::ops::Range;
 
+use super::cell_grid::CellGrid;
 use crate::backends::common::Backend;
 
 pub enum BatchKind<B: Backend> {
     Flat,
     Image {
-        width: u32,
-        height: u32,
-        merge_size: u32,
+        grid: CellGrid,
         first_cell: u32,
     },
     Trie {
@@ -30,16 +29,12 @@ impl<B: Backend> BatchTopology<B> {
     }
 
     pub fn image(
-        width: u32,
-        height: u32,
-        merge_size: u32,
+        grid: CellGrid,
         cells: Range<u32>,
     ) -> Self {
         Self {
             kind: BatchKind::Image {
-                width,
-                height,
-                merge_size,
+                grid,
                 first_cell: cells.start,
             },
             size: cells.end - cells.start,

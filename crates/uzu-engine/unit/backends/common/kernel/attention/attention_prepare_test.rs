@@ -15,6 +15,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        cell_grid::CellGrid,
         mixer::attention::rope::{RoPE, RoPEAxes},
     },
     tests::{
@@ -365,8 +366,9 @@ fn test_attention_prepare_mrope() {
         };
         // An image sits at one position, its cells go in raster order
         let image: Vec<[u32; 3]> = (0..15).map(|cell| [7, 7 + cell / 5, 7 + cell % 5]).collect();
-        check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::image(5, 3, 1, 0..15)), 7, &image);
-        check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::image(5, 3, 1, 6..10)), 7, &image[6..10]);
+        let image_grid = CellGrid::new(5, 3, 1);
+        check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::image(image_grid, 0..15)), 7, &image);
+        check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::image(image_grid, 6..10)), 7, &image[6..10]);
         // Text tokens follow each other along all the axes
         let text: Vec<[u32; 3]> = (7..10).map(|position| [position; 3]).collect();
         check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::flat(3)), 7, &text);
@@ -380,7 +382,7 @@ fn test_attention_prepare_mrope() {
                 height_pairs: 18,
                 width_pairs: 18,
             },
-            BatchTopology::image(6, 4, 2, 0..24),
+            BatchTopology::image(CellGrid::new(6, 4, 2), 0..24),
         );
         // Patches go block by block, each 2x2 block in raster order
         let mut patches = Vec::new();

@@ -3,7 +3,10 @@ use uzu_engine_macros::uzu_test;
 use super::KVCacheState;
 use crate::{
     backends::cpu::Cpu,
-    encodable_block::batch_topology::{BatchKind, BatchTopology},
+    encodable_block::{
+        batch_topology::{BatchKind, BatchTopology},
+        cell_grid::CellGrid,
+    },
 };
 
 fn accept(
@@ -57,7 +60,7 @@ fn rope_position_after_image() {
         accept_all(&mut state, BatchTopology::flat(7));
         for cells in chunks {
             assert_eq!(state.rope_position(), 7);
-            accept_all(&mut state, BatchTopology::image(5, 3, 1, cells));
+            accept_all(&mut state, BatchTopology::image(CellGrid::new(5, 3, 1), cells));
         }
         assert_eq!((state.context_length(), state.rope_position()), (22, 12));
         accept_all(&mut state, BatchTopology::flat(1));

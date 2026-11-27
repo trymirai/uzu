@@ -89,11 +89,9 @@ impl KVCacheState {
 
         self.rope_position += match batch_kind {
             &BatchKind::Image {
-                width,
-                height,
+                grid,
                 first_cell,
-                ..
-            } if first_cell + count == width * height => width.max(height),
+            } if first_cell + count == grid.cell_count() => grid.width.max(grid.height),
             BatchKind::Image {
                 ..
             } => 0,

@@ -868,7 +868,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         let embedding = model.decoder.embedding();
         let row_size = size_for_shape(&[embedding.model_dim()], embedding.data_type());
-        let row_count = image.width * image.height;
+        let row_count = image.grid.cell_count();
         for start in (0..row_count).step_by(ATTENTION_SUFFIX_CAPACITY as usize) {
             let length = (row_count - start).min(ATTENTION_SUFFIX_CAPACITY);
 
@@ -880,7 +880,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 image.embeddings.subrange(start as usize * row_size..(start + length) as usize * row_size),
                 &mut embedded,
             );
-            let batch_dim = BatchTopology::image(image.width, image.height, 1, start..start + length);
+            let batch_dim = BatchTopology::image(image.grid, start..start + length);
             let output = model.decoder.encode_embedded(
                 embedded,
                 None::<&B::ScratchBuffer>,

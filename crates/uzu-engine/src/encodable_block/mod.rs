@@ -1,4 +1,5 @@
 pub mod batch_topology;
+pub mod cell_grid;
 pub mod classifier;
 pub mod confidence_head;
 pub mod convolution;
