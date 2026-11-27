@@ -79,8 +79,6 @@ jobs:
 
       - name: Build monorepo bindings
         working-directory: crates/legacy/uzu/bindings/typescript
-        env:
-          MIRAI_DISABLE_DENO_BUILD: '1'
         run: |
           pnpm install --frozen-lockfile
           pnpm exec napi build --manifest-path ../../Cargo.toml --no-default-features --features metal,bindings-napi --platform --output-dir src/napi
