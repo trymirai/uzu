@@ -7,7 +7,7 @@ use crate::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::{
             qkv_norm::{QKVL2Op, QKVNormParams},
-            rope::RoPEGridParams,
+            rope::{RoPEGridParams, RoPEKind},
             trie::TrieNode,
         },
         kernel::AttentionPrepareKernel,
@@ -112,8 +112,11 @@ fn run_prepare<B: Backend, const DIM: usize>(
         &context,
         DataType::BF16,
         DIM as u32,
-        rope,
-        false,
+        if rope {
+            RoPEKind::Sequential
+        } else {
+            RoPEKind::None
+        },
         1,
         layout.backend_opaque_layout,
         true,
@@ -239,15 +242,14 @@ fn run_rope_queries<B: Backend>(
     rows: &[bf16],
     inverse_frequencies: &[f32],
     position_offset: u32,
-    grid: Option<RoPEGridParams>,
+    grid: Option<(RoPEKind, RoPEGridParams)>,
 ) -> (Vec<i8>, Vec<bf16>) {
     let suffix = rows.len() / dim;
     let kernel = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
         context,
         DataType::BF16,
         dim as u32,
-        true,
-        grid.is_some(),
+        grid.map_or(RoPEKind::Sequential, |(kind, _)| kind),
         1,
         kv_layout::<B>(context, dim as u32, 1).backend_opaque_layout,
         false,
@@ -284,7 +286,7 @@ fn run_rope_queries<B: Backend>(
         Some(2 * inverse_frequencies.len() as u32),
         Some(1.0),
         Some(position_offset),
-        grid,
+        grid.map(|(_, params)| params),
         0,
         dim as u32,
         suffix as u32,
@@ -302,7 +304,7 @@ fn run_rope_queries<B: Backend>(
 fn check_mrope<B: Backend>(
     dim: usize,
     axes: &[usize],
-    grid: RoPEGridParams,
+    grid: (RoPEKind, RoPEGridParams),
     position_offset: u32,
     positions: &[[u32; 3]],
 ) {
@@ -325,20 +327,20 @@ fn check_mrope<B: Backend>(
     }
 }
 
-/// Grid the attention block passes to the kernel for `batch`
+/// Kernel kind and grid the attention block passes to the kernel for `batch`
 fn grid_params<B: Backend>(
     context: &B::Context,
     frequency_pairs_per_axis: [u32; 3],
     interleaved_axes: bool,
     batch: BatchTopology<B>,
-) -> RoPEGridParams {
+) -> (RoPEKind, RoPEGridParams) {
     let pairs = frequency_pairs_per_axis.iter().sum::<u32>();
     let rope = RoPE {
         frequency_pairs_per_axis: Some(frequency_pairs_per_axis),
         interleaved_axes,
         ..RoPE::from_inverse_frequencies(&vec![1.0; pairs as usize], 1.0, 2 * pairs, 1, context).unwrap()
     };
-    rope.grid_params(batch.kind()).unwrap()
+    (rope.kind(), rope.grid_params(batch.kind()).unwrap())
 }
 
 #[uzu_test]

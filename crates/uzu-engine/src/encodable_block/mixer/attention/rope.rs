@@ -1,5 +1,8 @@
 use crate::{
-    backends::common::{Backend, Context, CpuBuffer, GlobalBufferCpuGpu, gpu_types::rope::RoPEGridParams},
+    backends::common::{
+        Backend, Context, CpuBuffer, GlobalBufferCpuGpu,
+        gpu_types::rope::{RoPEGridParams, RoPEKind},
+    },
     config::rope::AnyRoPEConfig,
     encodable_block::batch_topology::BatchKind,
 };
@@ -129,6 +132,14 @@ impl<B: Backend> RoPE<B> {
         })
     }
 
+    pub fn kind(&self) -> RoPEKind {
+        match (self.frequency_pairs_per_axis, self.interleaved_axes) {
+            (None, _) => RoPEKind::Sequential,
+            (Some(_), false) => RoPEKind::ContiguousGrid,
+            (Some(_), true) => RoPEKind::InterleavedGrid,
+        }
+    }
+
     pub fn grid_params(
         &self,
         batch_kind: &BatchKind<B>,
@@ -150,7 +161,6 @@ impl<B: Backend> RoPE<B> {
             height_pairs,
             width_pairs,
             merge_size,
-            interleaved_axes: u32::from(self.interleaved_axes),
         })
     }
 }

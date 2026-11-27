@@ -1,6 +1,7 @@
 use crate::{
     backends::common::{
         Backend, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
+        gpu_types::rope::RoPEKind,
         kernel::{AncestorAttentionKernel, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel},
     },
     config::{
@@ -96,8 +97,7 @@ impl<B: Backend> WeaverLayer<B> {
             context,
             DATA_TYPE,
             head_dim,
-            true,
-            false,
+            RoPEKind::Sequential,
             num_heads,
             prefix_attention.kv_layout().backend_opaque_layout,
             true,

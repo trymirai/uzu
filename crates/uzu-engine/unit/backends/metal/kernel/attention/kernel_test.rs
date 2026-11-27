@@ -7,7 +7,7 @@ use crate::{
     backends::{
         common::{
             Backend, CommandBufferEncoding, Context, Kernels,
-            gpu_types::{kv_layout, trie::TrieNode as GpuTrieNode},
+            gpu_types::{kv_layout, rope::RoPEKind, trie::TrieNode as GpuTrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
                 attention::KeyBlocks,
@@ -202,8 +202,7 @@ fn attention_matches_cpu() {
                         &metal,
                         DataType::BF16,
                         head_dim as u32,
-                        false,
-                        false,
+                        RoPEKind::None,
                         kv_heads as u32,
                         kernel.kv_layout().backend_opaque_layout,
                         append_kv,

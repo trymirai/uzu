@@ -4,7 +4,10 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::qkv_norm::{QKVL2Op, QKVNormParams},
+        gpu_types::{
+            qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::RoPEKind,
+        },
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
             attention::KeyBlocks,
@@ -178,15 +181,13 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Kernel)?;
 
-        let has_rope = rope.is_some();
-        let has_mrope = rope.as_ref().is_some_and(|rope| rope.frequency_pairs_per_axis.is_some());
+        let rope_kind = rope.as_ref().map_or(RoPEKind::None, RoPE::kind);
         let new_prepare = |has_trie: bool| {
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(
                 context,
                 data_type,
                 head_dim,
-                has_rope,
-                has_mrope,
+                rope_kind,
                 num_groups,
                 kernel.kv_layout().backend_opaque_layout,
                 !is_kv_sharing,
