@@ -432,7 +432,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     &token_id_refs,
                     &batch_dim_refs,
                     output_range,
-                    hidden_feature_layer_indices.as_deref(),
+                    hidden_feature_layer_indices,
                     &mut self.model_state.transformer_state,
                     &mut command_buffer,
                 )?;
