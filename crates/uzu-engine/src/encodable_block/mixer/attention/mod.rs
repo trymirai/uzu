@@ -86,7 +86,7 @@ impl<B: Backend> Attention<B> {
     ) -> Result<(Self, Option<InputRhtParameters<B>>), AttentionNewError<B>> {
         let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            Self::get_projection_dim(config),
+            config.qkvg_head_count() * config.head_dim,
             data_type,
             config.has_qkvg_biases,
             &parameter_tree.subtree("qkvg_projection"),
@@ -165,7 +165,7 @@ impl<B: Backend> Attention<B> {
         let ring_capacity = sliding_window_size;
         let is_kv_cache_ring = ring_capacity.is_some();
 
-        let projection_dim = Self::get_projection_dim(config);
+        let projection_dim = config.qkvg_head_count() * config.head_dim;
         let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
             AttentionKernelConfig {
@@ -385,10 +385,6 @@ impl<B: Backend> Attention<B> {
             command_buffer,
         );
         Ok((query_codes, query_scales))
-    }
-
-    fn get_projection_dim(config: &AttentionConfig) -> u32 {
-        config.qkvg_head_count() * config.head_dim
     }
 }
 
