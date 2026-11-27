@@ -17,9 +17,12 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         linear::{LinearMatmul, LinearMatmulError},
-        mixer::attention::{
-            Attention, AttentionEncodeError, AttentionNewError,
-            rope::{RoPE, RoPEAxes},
+        mixer::{
+            Mixer, MixerEncodeError,
+            attention::{
+                Attention, AttentionNewError,
+                rope::{RoPE, RoPEAxes},
+            },
         },
         mlp::{MlpEncodeError, UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
@@ -53,7 +56,7 @@ pub enum VisionLayerNewError<B: Backend> {
 #[derive(Debug, Error)]
 pub enum VisionLayerEncodeError<B: Backend> {
     #[error("Attention error: {0}")]
-    Attention(#[from] AttentionEncodeError<B>),
+    Attention(#[from] MixerEncodeError<B>),
     #[error("Backend error: {0}")]
     Backend(#[source] B::Error),
     #[error("MLP error: {0}")]
@@ -163,10 +166,7 @@ impl<B: Backend> VisionLayer<B> {
             .encode(&stream, 0, row_count, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(VisionLayerEncodeError::Backend)?;
 
-        let attention = {
-            let command_buffer = &mut *command_buffer.debug_group("attention");
-            self.attention.attend(hidden, batch_dim, None, command_buffer)?
-        };
+        let attention = self.attention.encode(hidden, batch_dim, None, command_buffer)?;
 
         self.residual_add.encode(
             None::<&B::ScratchBuffer>,

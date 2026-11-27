@@ -227,7 +227,7 @@ impl<B: Backend> Attention<B> {
         })
     }
 
-    pub fn attend(
+    fn attend(
         &self,
         hidden: B::ScratchBuffer,
         batch_dim: &BatchTopology<B>,
