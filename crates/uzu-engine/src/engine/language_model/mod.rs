@@ -11,11 +11,9 @@ use crate::{
     encodable_block::{
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
+        vision::model::{VisionLoadError, VisionModel},
     },
-    engine::{
-        Engine,
-        language_model::vision::model::{VisionLoadError, VisionModel},
-    },
+    engine::Engine,
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
     utils::file,
@@ -25,7 +23,6 @@ pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde
 pub mod grammar;
 pub mod state;
 pub mod stream;
-pub mod vision;
 
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,

@@ -81,5 +81,5 @@ pub(super) fn patch_grid(
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/engine/language_model/vision/patch_grid_test.rs"]
+#[path = "../../../unit/encodable_block/vision/patch_grid_test.rs"]
 mod tests;

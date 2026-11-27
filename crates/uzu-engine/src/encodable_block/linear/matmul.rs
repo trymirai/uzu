@@ -239,9 +239,10 @@ impl<B: Backend> LinearMatmul<B> {
     }
 
     fn ensure_data_type_supported(data_type: DataType) -> Result<(), LinearMatmulError<B>> {
-        match matches!(data_type, DataType::BF16 | DataType::F32) {
-            true => Ok(()),
-            false => Err(LinearMatmulError::UnsupportedDataType(data_type)),
+        if matches!(data_type, DataType::BF16 | DataType::F32) {
+            Ok(())
+        } else {
+            Err(LinearMatmulError::UnsupportedDataType(data_type))
         }
     }
 }

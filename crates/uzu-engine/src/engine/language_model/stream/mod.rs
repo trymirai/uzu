@@ -4,12 +4,11 @@ use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, capture_matcher::CaptureError},
-    encodable_block::decoder::DecoderError,
+    encodable_block::{decoder::DecoderError, vision::model::VisionEncodeError},
     engine::language_model::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
         state::LanguageModelState,
-        vision::model::VisionEncodeError,
     },
     speculators::dflash_tfm::DFlashTreeError,
     utils::{timestamps::TimestampSender, trace},

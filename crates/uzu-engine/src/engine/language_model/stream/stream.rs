@@ -22,13 +22,13 @@ use crate::{
         decoder::{DecoderEncodeOutput, DecoderError},
         mixer::attention::ATTENTION_SUFFIX_CAPACITY,
         sampling::SamplingMethod,
+        vision::model::VisionEncodeError,
     },
     engine::language_model::{
         LanguageModel,
         grammar::Grammar,
         state::LanguageModelState,
         stream::{LanguageModelInput, LanguageModelStreamError, LanguageModelStreamOptions},
-        vision::model::VisionEncodeError,
     },
     trie,
     utils::{
@@ -868,9 +868,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let image = vision_model.encode(image, command_buffer)?;
         drop(encode_span);
 
-        let embedding = model.decoder.embedding();
-        let row_size = size_for_shape(&[embedding.model_dim()], embedding.data_type());
         let row_count = image.grid.cell_count();
+        let row_size = image.embeddings.size() / row_count as usize;
         for start in (0..row_count).step_by(ATTENTION_SUFFIX_CAPACITY as usize) {
             let length = (row_count - start).min(ATTENTION_SUFFIX_CAPACITY);
 

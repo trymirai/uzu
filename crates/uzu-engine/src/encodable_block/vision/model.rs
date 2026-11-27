@@ -17,11 +17,11 @@ use crate::{
         linear::{Linear, LinearBlockError, LinearEncodeError},
         mlp::{MlpEncodeError, UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
-        vision_layer::{VisionLayer, VisionLayerEncodeError, VisionLayerNewError},
-    },
-    engine::language_model::vision::{
-        patch_grid::{VisionImageError, patch_grid},
-        position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
+        vision::{
+            layer::{VisionLayer, VisionLayerEncodeError, VisionLayerNewError},
+            patch_grid::{VisionImageError, patch_grid},
+            position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
+        },
     },
     safetensors::ParameterTree,
 };
