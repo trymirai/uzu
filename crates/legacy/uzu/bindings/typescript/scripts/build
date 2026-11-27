@@ -4,8 +4,6 @@ set -exuo pipefail
 
 cd "$(dirname "$0")/.."
 
-node scripts/utils/check-version.cjs
-
 # Generate NAPI wrappers automatically from TypeScript definitions
 node scripts/utils/generate-napi-wrappers.cjs
 
@@ -46,8 +44,3 @@ cp src/browser.mjs src/browser.d.mts dist/
 # import the output ESM
 (cd dist && node -e 'require("@trymirai/uzu")')
 (cd dist && node -e 'import("@trymirai/uzu")' --input-type=module)
-
-if [ "${MIRAI_DISABLE_DENO_BUILD:-0}" != "1" ] && [ -e ./scripts/build-deno ]
-then
-  ./scripts/build-deno
-fi

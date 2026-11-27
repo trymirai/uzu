@@ -34,7 +34,6 @@
         "Resources/en.lproj/InfoPlist.strings": "en.lproj/InfoPlist.strings"
       },
       "signingIdentity": "-",
-      "minimumSystemVersion": "26.4",
       "dmg": {
         "background": "dmg-background.tiff",
         "windowSize": { "width": 638, "height": 398 },

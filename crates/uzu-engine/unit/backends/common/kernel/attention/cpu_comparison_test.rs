@@ -121,7 +121,7 @@ fn run<B: Backend, T: DataTypeRepr>(
     let gate = config.gate_row_stride.map(|stride| {
         create_buffer_with_data::<B, T>(
             &context,
-            &(0..suffix * stride).map(|i| T::from((i % 37) as f32 / 17.0 - 1.0).unwrap()).collect::<Vec<_>>(),
+            &(0..suffix * stride).map(|i| T::from((i * 7 % 37) as f32 / 17.0 - 1.0).unwrap()).collect::<Vec<_>>(),
         )
     });
     let result = kernel
@@ -148,7 +148,8 @@ fn run<B: Backend, T: DataTypeRepr>(
     let mut output = create_buffer::<B, T>(&context, (suffix * config.num_q_heads * dim) as usize);
     command.encode_copy(&result, &mut output);
     submit_command_buffer(command);
-    let tolerance = 5e-3;
+    // Just over two bf16 steps in [0.5, 1).
+    let tolerance = 8e-3;
     // MXU also quantizes attention probabilities to u8.
     #[cfg(backend = "metal")]
     let tolerance = if kernel.kv_layout().backend_opaque_layout == KVLayout::MxuTiled as u32 {
@@ -157,6 +158,20 @@ fn run<B: Backend, T: DataTypeRepr>(
         tolerance
     };
     (buffer_to_vec::<B, T>(&context, &output), tolerance)
+}
+
+fn compare<T: DataTypeRepr + num_traits::Float + std::fmt::Display>(
+    config: AttentionKernelConfig,
+    cache: KVCacheState,
+    nodes: &[TrieNode],
+    is_trie: bool,
+    label: &str,
+) {
+    for_each_non_cpu_backend!(|B| {
+        let (expected, _) = run::<Cpu, T>(config, cache, nodes, is_trie);
+        let (actual, tolerance) = run::<B, T>(config, cache, nodes, is_trie);
+        assert_eq_float(&expected, &actual, tolerance, label);
+    });
 }
 
 #[uzu_test]
@@ -212,18 +227,9 @@ fn attention_windows_sinks_and_head_dims() {
                 KVCacheState::new(prefix, None)
             };
             for is_trie in [false, true] {
-                for_each_non_cpu_backend!(|B| {
-                    let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
-                    let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
-                    assert_eq_float(
-                        &expected,
-                        &actual,
-                        tolerance,
-                        &format!(
-                            "INT8 D{dim} causal={causal} ring={ring} window={window:?} scale={scale:?} trie={is_trie}"
-                        ),
-                    );
-                });
+                let label =
+                    format!("INT8 D{dim} causal={causal} ring={ring} window={window:?} scale={scale:?} trie={is_trie}");
+                compare::<bf16>(config, cache, nodes, is_trie, &label);
             }
         }
     }
@@ -254,14 +260,15 @@ fn attention_large_tree_and_f32() {
         data_type: DataType::F32,
         sparse_compression_ratio: None,
     };
-    for_each_non_cpu_backend!(|B| {
-        let (expected, _) = run::<Cpu, f32>(config, KVCacheState::new(37, None), nodes, true);
-        let (actual, tolerance) = run::<B, f32>(config, KVCacheState::new(37, None), nodes, true);
-        assert_eq_float(&expected, &actual, tolerance, "INT8 f32 branching tree with 80 nodes");
-    });
-    for (causal, ring, window) in
-        [(true, false, None), (false, false, None), (true, true, Some(17)), (false, true, Some(17))]
-    {
+    compare::<f32>(config, KVCacheState::new(37, None), nodes, true, "INT8 f32 branching tree with 80 nodes");
+    for (causal, ring, window, prefix) in [
+        (true, false, None, 37),
+        (false, false, None, 37),
+        (true, true, Some(17), 37),
+        (false, true, Some(17), 37),
+        (true, true, Some(9), 128),
+        (true, true, Some(1024), 1031),
+    ] {
         let config = AttentionKernelConfig {
             head_dim: 256,
             num_groups: 4,
@@ -276,21 +283,14 @@ fn attention_large_tree_and_f32() {
             sparse_compression_ratio: None,
         };
         let cache = if ring {
-            ring_cache(37, 11)
+            ring_cache(prefix, 11)
         } else {
-            KVCacheState::new(37, None)
+            KVCacheState::new(prefix, None)
         };
         for is_trie in [false, true] {
-            for_each_non_cpu_backend!(|B| {
-                let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, is_trie);
-                let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, is_trie);
-                assert_eq_float(
-                    &expected,
-                    &actual,
-                    tolerance,
-                    &format!("INT8 BF16 80 nodes causal={causal} ring={ring} window={window:?} trie={is_trie}"),
-                );
-            });
+            let label =
+                format!("INT8 BF16 80 nodes L{prefix} causal={causal} ring={ring} window={window:?} trie={is_trie}");
+            compare::<bf16>(config, cache, nodes, is_trie, &label);
         }
     }
 }
@@ -327,16 +327,8 @@ fn attention_single_query() {
                     } else {
                         KVCacheState::new(prefix, None)
                     };
-                    for_each_non_cpu_backend!(|B| {
-                        let (expected, _) = run::<Cpu, bf16>(config, cache, nodes, false);
-                        let (actual, tolerance) = run::<B, bf16>(config, cache, nodes, false);
-                        assert_eq_float(
-                            &expected,
-                            &actual,
-                            tolerance,
-                            &format!("single-query INT8 D{dim} Q{q_heads} prefix={prefix} ring={ring}"),
-                        );
-                    });
+                    let label = format!("single-query INT8 D{dim} Q{q_heads} prefix={prefix} ring={ring}");
+                    compare::<bf16>(config, cache, nodes, false, &label);
                 }
             }
         }
@@ -366,11 +358,7 @@ fn attention_vector_partial_rows() {
             } else {
                 KVCacheState::new(prefix, None)
             };
-            for_each_non_cpu_backend!(|B| {
-                let (expected, _) = run::<Cpu, f32>(config, cache, nodes, true);
-                let (actual, tolerance) = run::<B, f32>(config, cache, nodes, true);
-                assert_eq_float(&expected, &actual, tolerance, "INT8 vector partial rows, tree, F32, sinks and gate");
-            });
+            compare::<f32>(config, cache, nodes, true, "INT8 vector partial rows, tree, F32, sinks and gate");
         }
     }
 }

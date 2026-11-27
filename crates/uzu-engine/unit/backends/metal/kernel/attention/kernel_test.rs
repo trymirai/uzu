@@ -88,6 +88,7 @@ fn attention_matches_cpu() {
             (32, 8, 4097, true, false, NAN),
             (24, 63, 29, true, false, NAN),
             (24, 64, 0, true, false, NAN),
+            (8, 80, 16384, false, false, NAN),
         ] {
             let (head_dim, kv_heads) = match q_heads {
                 24 | 32 if sparse => (256, 2),

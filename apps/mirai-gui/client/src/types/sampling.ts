@@ -11,12 +11,14 @@ export type SamplingPolicyPayload =
       suffixRepetitionLength?: number | null;
     };
 
-// Same floor as the CLI.
+// Same floors as the CLI.
 export const TEMPERATURE_MIN = 0.05;
+export const TOP_P_MIN = 0.05;
 
 export const normalizeSampling = (sampling: SamplingPolicyPayload | { type: "Argmax" }): SamplingPolicyPayload =>
   sampling.type === "Argmax" ||
-  (sampling.type === "Stochastic" && sampling.temperature != null && sampling.temperature <= 0)
+  (sampling.type === "Stochastic" &&
+    ((sampling.temperature != null && sampling.temperature <= 0) || (sampling.topP != null && sampling.topP <= 0)))
     ? { type: "Greedy" }
     : sampling;
 
