@@ -60,7 +60,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> k_scales,
     [[Optional("append_kv")]] Ptr<uint8_t, Access.ReadWrite> v_codes,
     [[Optional("append_kv")]] Ptr<bf16, Access.ReadWrite> v_scales,
-    [[Optional("has_rope")]] Ptr<float, Access.Read> rope_inverse_frequencies,
+    [[Optional("rope_kind != RoPEKind::None")]] Ptr<float, Access.Read> rope_inverse_frequencies,
     [[Optional("has_query_norm_scales")]] Ptr<float, Access.Read> query_norm_scales,
     [[Optional("has_key_norm_scales")]] Ptr<float, Access.Read> key_norm_scales,
     [[Optional("has_value_norm_scales")]] Ptr<float, Access.Read> value_norm_scales,
@@ -69,10 +69,12 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     [[Optional("block_mean")]] Ptr<ElementT, Access.ReadWrite> raw_keys,
     QKVNormParams norm_params,
     uint num_q_heads,
-    [[Optional("has_rope")]] uint rope_dim,
-    [[Optional("has_rope")]] float rope_scale,
-    [[Optional("has_rope")]] uint rope_position_offset,
-    [[Optional("has_mrope")]] RoPEGridParams rope_grid,
+    [[Optional("rope_kind != RoPEKind::None")]] uint rope_dim,
+    [[Optional("rope_kind != RoPEKind::None")]] float rope_scale,
+    [[Optional("rope_kind != RoPEKind::None")]] uint rope_position_offset,
+    [
+      [Optional("rope_kind == RoPEKind::ContiguousGrid || rope_kind == RoPEKind::InterleavedGrid")]
+    ] RoPEGridParams rope_grid,
     uint kv_token_offset,
     uint input_row_stride,
     uint suffix_length,
@@ -83,8 +85,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
     [[Groups("num_q_heads + num_kv_heads * 2")]] uint head,
     [[Threads("32")]] uint tid,
     [[Specialize]] uint HEAD_DIM,
-    [[Specialize]] bool has_rope,
-    [[Specialize]] bool has_mrope,
+    [[Specialize]] RoPEKind rope_kind,
     [[Specialize]] uint num_kv_heads,
     [[Specialize]] uint backend_opaque_layout,
     [[Specialize]] bool append_kv,
@@ -150,9 +151,11 @@ func AttentionPrepare<ElementT : IStorageFloat>(
   }
 
   // Trie nodes sit at their depth below the root, not at their row in the suffix.
+  let has_rope = rope_kind != RoPEKind.None;
   var rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token].height : token) : 0;
   var grid_row = 0u;
   var grid_column = 0u;
+  let has_mrope = rope_kind == RoPEKind.ContiguousGrid || rope_kind == RoPEKind.InterleavedGrid;
   if (has_mrope) {
     // Rows are cells of grids in raster order: a text token is a 1x1 grid.
     let cell = rope_grid.first_cell + (has_trie ? trie[token].height : token);
@@ -183,7 +186,7 @@ func AttentionPrepare<ElementT : IStorageFloat>(
             grid_column,
             rope_grid.height_pairs,
             rope_grid.width_pairs,
-            rope_grid.interleaved_axes != 0
+            rope_kind == RoPEKind.InterleavedGrid
         );
       }
       let rotated = rope_rotate(element, paired, rope_inverse_frequencies, rope_scale, position, channel, rope_dim);

@@ -7,7 +7,7 @@ use crate::{
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
     encodable_block::{
-        batch_topology::{BatchKind, BatchTopology},
+        batch_topology::BatchTopology,
         mixer::{Mixer, MixerState, attention::Attention},
     },
 };
@@ -213,19 +213,7 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let count = accepted_indices.len() as u32;
-        let rope_advance = match batch_dim.kind() {
-            &BatchKind::Image {
-                width,
-                height,
-                first_cell,
-                ..
-            } if first_cell + count == width * height => width.max(height),
-            BatchKind::Image {
-                ..
-            } => 0,
-            _ => count,
-        };
+        let rope_advance = batch_dim.position_advance(accepted_indices.len() as u32);
         let copies = self.cache.accept(accepted_indices, rope_advance);
         assert!(
             copies

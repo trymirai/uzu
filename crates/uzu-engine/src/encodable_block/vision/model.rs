@@ -5,24 +5,25 @@ use crate::{
     backends::{
         Backend,
         common::{
-            CommandBuffer, CommandBufferEncoding, Kernels, gpu_types::vision::CHANNELS, kernel::VisionPatchifyKernel,
+            CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu, Kernels,
+            gpu_types::vision::CHANNELS, kernel::VisionPatchifyKernel,
         },
     },
     config::vision::VisionConfig,
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        cell_grid::CellGrid,
         linear::{Linear, LinearBlockError, LinearEncodeError},
         mlp::{MlpEncodeError, UngatedMlp, UngatedMlpNewError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
-        vision_layer::{VisionLayer, VisionLayerEncodeError, VisionLayerNewError},
-    },
-    engine::language_model::vision::{
-        patch_grid::{VisionImageError, merged_image_grid},
-        position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
+        vision::{
+            layer::{VisionLayer, VisionLayerEncodeError, VisionLayerNewError},
+            patch_grid::{VisionImageError, patch_grid},
+            position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
+        },
     },
     safetensors::ParameterTree,
-    utils::buffer::create_buffer_with_data,
 };
 
 #[derive(Debug, Error)]
@@ -70,8 +71,8 @@ pub enum VisionEncodeError<B: Backend> {
 
 pub struct VisionEncodedImage<B: Backend> {
     pub embeddings: B::ScratchBuffer,
-    pub width: u32,
-    pub height: u32,
+    /// Image tokens
+    pub grid: CellGrid,
 }
 
 pub struct VisionModel<B: Backend> {
@@ -179,10 +180,10 @@ impl<B: Backend> VisionModel<B> {
         )
         .await?;
 
-        let image_mean = create_buffer_with_data::<B, _>(context, &config.preprocessing_config.image_mean)
-            .map_err(VisionLoadError::Backend)?;
-        let image_std = create_buffer_with_data::<B, _>(context, &config.preprocessing_config.image_std)
-            .map_err(VisionLoadError::Backend)?;
+        let image_mean =
+            channel_buffer::<B>(context, &config.preprocessing_config.image_mean).map_err(VisionLoadError::Backend)?;
+        let image_std =
+            channel_buffer::<B>(context, &config.preprocessing_config.image_std).map_err(VisionLoadError::Backend)?;
 
         Ok(Self {
             config,
@@ -203,12 +204,10 @@ impl<B: Backend> VisionModel<B> {
         image: &VisionImage,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<VisionEncodedImage<B>, VisionEncodeError<B>> {
-        let (width, height) = self.merged_image_grid(image)?;
+        let grid = self.patch_grid(image)?;
         let encoder_config = &self.config.encoder_config;
         let patch_size = encoder_config.patch_size;
-        let grid_width = image.width / patch_size;
-        let grid_height = image.height / patch_size;
-        let rows = grid_width * grid_height;
+        let rows = grid.cell_count();
         let patch_dim = encoder_config.in_channels * encoder_config.temporal_patch_size * patch_size * patch_size;
 
         let command_buffer = &mut *command_buffer.debug_group("vision encode");
@@ -225,16 +224,16 @@ impl<B: Backend> VisionModel<B> {
             &self.image_std,
             image.width,
             patch_size,
-            encoder_config.spatial_merge_size,
+            grid.merge_size,
             encoder_config.temporal_patch_size,
             rows * patch_dim,
             command_buffer,
         );
 
         let mut stream = self.patch_emb.encode(patches, rows, command_buffer)?;
-        self.pos_emb.encode(&mut stream, grid_width, grid_height, encoder_config.spatial_merge_size, command_buffer);
+        self.pos_emb.encode(&mut stream, grid, command_buffer);
 
-        let batch_dim = BatchTopology::image(grid_width, grid_height, encoder_config.spatial_merge_size, 0..rows);
+        let batch_dim = BatchTopology::image(grid, 0..rows);
         for layer in self.layers.iter() {
             stream = layer.encode(stream, &batch_dim, command_buffer)?;
         }
@@ -244,13 +243,12 @@ impl<B: Backend> VisionModel<B> {
             .encode(&stream, 0, rows, None::<&mut B::ScratchBuffer>, command_buffer)
             .map_err(VisionEncodeError::Backend)?;
 
-        let merged_rows = rows / encoder_config.spatial_merge_size.pow(2);
-        let embeddings = self.merger_mlp.encode(normalized, merged_rows, command_buffer)?;
+        let token_grid = grid.merged();
+        let embeddings = self.merger_mlp.encode(normalized, token_grid.cell_count(), command_buffer)?;
 
         Ok(VisionEncodedImage {
             embeddings,
-            width,
-            height,
+            grid: token_grid,
         })
     }
 
@@ -258,17 +256,16 @@ impl<B: Backend> VisionModel<B> {
         &self,
         image: &VisionImage,
     ) -> Result<usize, VisionImageError> {
-        let (token_columns, token_rows) = self.merged_image_grid(image)?;
-        Ok((token_columns * token_rows) as usize)
+        Ok(self.patch_grid(image)?.merged().cell_count() as usize)
     }
 
-    fn merged_image_grid(
+    fn patch_grid(
         &self,
         image: &VisionImage,
-    ) -> Result<(u32, u32), VisionImageError> {
+    ) -> Result<CellGrid, VisionImageError> {
         let config = &self.config.encoder_config;
         let preprocessing_config = &self.config.preprocessing_config;
-        merged_image_grid(
+        patch_grid(
             image,
             config.patch_size,
             config.spatial_merge_size,
@@ -278,4 +275,13 @@ impl<B: Backend> VisionModel<B> {
             preprocessing_config.max_pixels,
         )
     }
+}
+
+fn channel_buffer<B: Backend>(
+    context: &B::Context,
+    values: &[f32; CHANNELS as usize],
+) -> Result<B::GlobalGpuBuffer, B::Error> {
+    let mut buffer = context.create_buffer_cpu_gpu(size_of_val(values))?;
+    buffer.copyin(values);
+    buffer.handoff()
 }

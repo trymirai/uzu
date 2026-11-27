@@ -10,12 +10,7 @@ const config: JestConfigWithTsJest = {
         '^@trymirai/uzu$': '<rootDir>/src/index.ts',
         '^@trymirai/uzu/(.*)$': '<rootDir>/src/$1',
     },
-    modulePathIgnorePatterns: [
-        '<rootDir>/dist/',
-        '<rootDir>/deno/',
-        '<rootDir>/deno_tests/',
-        '<rootDir>/packages/',
-    ],
+    modulePathIgnorePatterns: ['<rootDir>/dist/', '<rootDir>/packages/'],
     testPathIgnorePatterns: ['scripts'],
     // prettierPath: require.resolve('prettier-2'),
 };

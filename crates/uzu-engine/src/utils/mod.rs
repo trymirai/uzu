@@ -1,4 +1,3 @@
-pub mod buffer;
 pub mod dispatch_dtype;
 pub mod downcast;
 #[cfg_attr(target_arch = "wasm32", path = "wasm_file.rs")]

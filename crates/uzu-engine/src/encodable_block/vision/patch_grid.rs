@@ -1,7 +1,7 @@
 use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
-use crate::backends::common::gpu_types::vision::CHANNELS;
+use crate::{backends::common::gpu_types::vision::CHANNELS, encodable_block::cell_grid::CellGrid};
 
 #[derive(Debug, Error)]
 pub enum VisionImageError {
@@ -31,8 +31,8 @@ pub enum VisionImageError {
     ImageTooLarge,
 }
 
-/// Checks the pixel count, the RGB buffer and the two vision kernel dispatch sizes before returning the merged grid.
-pub(super) fn merged_image_grid(
+/// Checks the pixel count, the RGB buffer and the two vision kernel dispatch sizes before returning the patch grid.
+pub(super) fn patch_grid(
     image: &VisionImage,
     patch_size: u32,
     merge_size: u32,
@@ -40,7 +40,7 @@ pub(super) fn merged_image_grid(
     model_dim: u32,
     min_pixels: u32,
     max_pixels: u32,
-) -> Result<(u32, u32), VisionImageError> {
+) -> Result<CellGrid, VisionImageError> {
     let block_size =
         patch_size.checked_mul(merge_size).filter(|&size| size != 0).ok_or(VisionImageError::InvalidBlockSize {
             patch_size,
@@ -77,25 +77,9 @@ pub(super) fn merged_image_grid(
     let patches = (width / patch_size) * (height / patch_size);
     patches.checked_mul(model_dim).ok_or(VisionImageError::ImageTooLarge)?;
 
-    Ok((width / block_size, height / block_size))
-}
-
-/// Grid coordinates `(x, y)` of the `row`-th patch of the vision encoder input.
-/// Same as `vision_patch_coordinates` in `metal/kernel/vision/patch_grid.h`, see the example there.
-pub fn vision_patch_coordinates(
-    row: u32,
-    grid_width: u32,
-    merge_size: u32,
-) -> (u32, u32) {
-    let block_size = merge_size * merge_size;
-    let blocks_per_row = grid_width / merge_size;
-    let block = row / block_size;
-    let in_block = row % block_size;
-    let y = (block / blocks_per_row) * merge_size + in_block / merge_size;
-    let x = (block % blocks_per_row) * merge_size + in_block % merge_size;
-    (x, y)
+    Ok(CellGrid::new(width / patch_size, height / patch_size, merge_size))
 }
 
 #[cfg(test)]
-#[path = "../../../../unit/engine/language_model/vision/patch_grid_test.rs"]
+#[path = "../../../unit/encodable_block/vision/patch_grid_test.rs"]
 mod tests;

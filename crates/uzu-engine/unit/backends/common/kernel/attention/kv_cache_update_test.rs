@@ -4,7 +4,7 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::common::{
         Backend, Context, Kernels,
-        gpu_types::kv_cache_update::Copy,
+        gpu_types::{kv_cache_update::Copy, rope::RoPEKind},
         kernel::{AttentionPrepareKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
     data_type::DataType,
@@ -37,8 +37,7 @@ fn prepare_cache<B: Backend>(
         context,
         DataType::BF16,
         HEAD_DIM,
-        false,
-        false,
+        RoPEKind::None,
         NUM_HEADS,
         layout.backend_opaque_layout,
         true,

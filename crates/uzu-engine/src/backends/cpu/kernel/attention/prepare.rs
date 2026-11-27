@@ -7,16 +7,16 @@ use crate::{
         common::gpu_types::{
             kv_layout,
             qkv_norm::{QKVL2Op, QKVNormParams},
-            rope::RoPEGridParams,
+            rope::{RoPEGridParams, RoPEKind},
             trie::TrieNode,
         },
         cpu::kernel::{
             activation_transform::{INT8_SYMMETRIC_QUANTIZATION_MAXIMUM as INT8_MAX, hadamard_transform},
             attention::rope::{apply_rope, mrope_axis_offset},
+            vision::patch_grid::vision_patch_coordinates,
         },
     },
     data_type::DataTypeRepr,
-    engine::language_model::vision::patch_grid::vision_patch_coordinates,
 };
 
 #[kernel(AttentionPrepare)]
@@ -30,7 +30,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[optional(append_kv)] k_scales: Option<*mut bf16>,
     #[optional(append_kv)] v_codes: Option<*mut u8>,
     #[optional(append_kv)] v_scales: Option<*mut bf16>,
-    #[optional(has_rope)] rope_inverse_frequencies: Option<*const f32>,
+    #[optional(rope_kind != RoPEKind::None)] rope_inverse_frequencies: Option<*const f32>,
     #[optional(has_query_norm_scales)] query_norm_scales: Option<*const f32>,
     #[optional(has_key_norm_scales)] key_norm_scales: Option<*const f32>,
     #[optional(has_value_norm_scales)] value_norm_scales: Option<*const f32>,
@@ -39,18 +39,19 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[optional(block_mean)] raw_keys: Option<*mut ElementT>,
     norm_params: QKVNormParams,
     num_q_heads: u32,
-    #[optional(has_rope)] rope_dim: Option<u32>,
-    #[optional(has_rope)] rope_scale: Option<f32>,
-    #[optional(has_rope)] rope_position_offset: Option<u32>,
-    #[optional(has_mrope)] rope_grid: Option<RoPEGridParams>,
+    #[optional(rope_kind != RoPEKind::None)] rope_dim: Option<u32>,
+    #[optional(rope_kind != RoPEKind::None)] rope_scale: Option<f32>,
+    #[optional(rope_kind != RoPEKind::None)] rope_position_offset: Option<u32>,
+    #[optional(rope_kind == RoPEKind::ContiguousGrid || rope_kind == RoPEKind::InterleavedGrid)] rope_grid: Option<
+        RoPEGridParams,
+    >,
     kv_token_offset: u32,
     input_row_stride: u32,
     suffix_length: u32,
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
     #[optional(has_trie)] trie: Option<*const TrieNode>,
-    #[specialize] has_rope: bool,
-    #[specialize] has_mrope: bool,
+    #[specialize] rope_kind: RoPEKind,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,
     #[specialize] append_kv: bool,
@@ -62,6 +63,8 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[specialize] has_trie: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
+    let has_rope = rope_kind != RoPEKind::None;
+    let has_mrope = matches!(rope_kind, RoPEKind::ContiguousGrid | RoPEKind::InterleavedGrid);
     let rope_dim = if has_rope {
         rope_dim.unwrap() as usize
     } else {
@@ -176,7 +179,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
                             grid_column,
                             grid.height_pairs,
                             grid.width_pairs,
-                            grid.interleaved_axes != 0,
+                            rope_kind == RoPEKind::InterleavedGrid,
                         );
                     }
                     apply_rope::<ElementT, _>(

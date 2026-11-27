@@ -8,7 +8,7 @@ use crate::{
             kernel::ActivationKernel,
         },
     },
-    config::vision::UngatedMLPConfig,
+    config::mlp::ungated_mlp::UngatedMLPConfig,
     data_type::DataType,
     encodable_block::{
         linear::{Linear, LinearBlockError},

@@ -13,7 +13,7 @@ use crate::{
         common::{
             Backend, CommandBufferCompleted, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending,
             Context, Kernels,
-            gpu_types::weaver::MetadataIdx,
+            gpu_types::{rope::RoPEKind, weaver::MetadataIdx},
             kernel::{AncestorAttentionKernel, AttentionPrepareKernel},
         },
         cpu::Cpu,
@@ -104,8 +104,7 @@ impl<B: Backend> Runner<B> {
                 &context,
                 DataType::BF16,
                 HEAD_DIM as u32,
-                false,
-                false,
+                RoPEKind::None,
                 NUM_HEADS,
                 layout.backend_opaque_layout,
                 true,

@@ -1,43 +1,50 @@
 use anyhow::{Context, Result};
-use regex::Regex;
+use serde::Serialize;
 
 use crate::{
     configs::{PlatformsConfig, WorkspaceManifest},
     sync::SyncTask,
 };
 
-pub enum MiraiGuiSyncTask {
-    PackageJson,
-    TauriConf,
+/// Writes the app's macOS Tauri config, which Tauri merges over `tauri.conf.json`, so the minimum macOS version
+/// follows platforms.toml.
+pub struct MiraiGuiSyncTask;
+
+#[derive(Serialize)]
+struct TauriConfig<'a> {
+    bundle: Bundle<'a>,
+}
+
+#[derive(Serialize)]
+struct Bundle<'a> {
+    #[serde(rename = "macOS")]
+    mac_os: MacOsBundle<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MacOsBundle<'a> {
+    minimum_system_version: &'a str,
 }
 
 impl SyncTask for MiraiGuiSyncTask {
     fn process(
         &self,
         platforms: &PlatformsConfig,
-        workspace: &WorkspaceManifest,
-        input: &str,
+        _workspace: &WorkspaceManifest,
+        _input: &str,
     ) -> Result<String> {
-        let version = &workspace.workspace.package.version;
-        match self {
-            Self::PackageJson => replace_string_field(input, "version", version),
-            Self::TauriConf => {
-                let target = platforms
-                    .envs
-                    .get("MACOSX_DEPLOYMENT_TARGET")
-                    .context("Missing MACOSX_DEPLOYMENT_TARGET in platforms.toml [envs]")?;
-                replace_string_field(input, "minimumSystemVersion", target)
+        let minimum_system_version = platforms
+            .envs
+            .get("MACOSX_DEPLOYMENT_TARGET")
+            .context("Missing MACOSX_DEPLOYMENT_TARGET in platforms.toml [envs]")?;
+        let config = TauriConfig {
+            bundle: Bundle {
+                mac_os: MacOsBundle {
+                    minimum_system_version,
+                },
             },
-        }
+        };
+        Ok(serde_json::to_string_pretty(&config)? + "\n")
     }
-}
-
-fn replace_string_field(
-    input: &str,
-    key: &str,
-    value: &str,
-) -> Result<String> {
-    let regex = Regex::new(&format!(r#"("{key}"\s*:\s*)"[^"]*""#))?;
-    let literal = serde_json::to_string(value)?;
-    Ok(regex.replace(input, format!("$1{literal}").as_str()).into_owned())
 }
