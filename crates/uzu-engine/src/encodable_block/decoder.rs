@@ -166,8 +166,8 @@ impl<B: Backend> Decoder<B> {
         )
     }
 
-    /// Consecutive prefill chunks, see [`Transformer::encode_chunks`]; only the last chunk has an
-    /// output range and hidden features.
+    /// Consecutive prefill chunks, see [`Transformer::encode_chunks`]. The output range applies to
+    /// the last chunk; requested hidden features include all chunks in input order.
     pub fn encode_chunks(
         &self,
         token_ids: &[impl BufferRef<Backend = B>],

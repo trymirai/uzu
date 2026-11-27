@@ -4,7 +4,7 @@ use derive_more::Debug;
 use thiserror::Error;
 
 use crate::{
-    backends::common::{Backend, Buffer, BufferRef, CommandBuffer, CommandBufferEncoding},
+    backends::common::{Backend, Buffer, BufferMut, BufferRef, CommandBuffer, CommandBufferEncoding},
     config::{
         token_mixer::AnyTokenMixerConfig, transformer::TransformerConfig, transformer_layer::TransformerLayerConfig,
     },
@@ -373,6 +373,13 @@ impl<B: Backend> Transformer<B> {
             return Err(TransformerEncodeError::HiddenFeaturesRequireAdditiveResidual);
         }
 
+        let mut chunk_offsets = Vec::with_capacity(batch_dims.len());
+        let mut total_tokens = 0usize;
+        for batch_dim in batch_dims {
+            chunk_offsets.push(total_tokens);
+            total_tokens += batch_dim.size() as usize;
+        }
+
         let mut state = state;
         let initial_context_length = state.as_ref().map_or(0, |state| state.context_length);
         let mut context_length = initial_context_length;
@@ -408,22 +415,39 @@ impl<B: Backend> Transformer<B> {
                             layer.encode_from_mlp(pending, per_layer_inputs, batch_dims[index], command_buffer)?;
                         chunks[index].state = Some(ChunkState::Stream(stream));
 
-                        if index == last
-                            && let (Some(hidden_features), Some(indices)) =
-                                (&mut hidden_features, hidden_feature_layer_indices)
+                        if let (Some(hidden_features), Some(indices)) =
+                            (&mut hidden_features, hidden_feature_layer_indices)
                         {
                             for (feature_index, &layer_index) in indices.iter().enumerate() {
                                 if layer_index == layer.layer_index {
-                                    let feature = self
-                                        .capture_hidden_feature(
-                                            match chunks[index].state.as_ref() {
-                                                Some(ChunkState::Stream(stream)) => stream,
-                                                _ => unreachable!("completed layer stream is available"),
-                                            },
-                                            command_buffer,
-                                        )
-                                        .map_err(TransformerEncodeError::Backend)?;
-                                    hidden_features[feature_index] = Some(feature);
+                                    let stream = match chunks[index].state.as_ref() {
+                                        Some(ChunkState::Stream(stream)) => stream,
+                                        _ => unreachable!("completed layer stream is available"),
+                                    };
+                                    let chunk_token_count = batch_dims[index].size() as usize;
+                                    assert!(chunk_token_count > 0, "prefill chunks must be nonempty");
+                                    assert_eq!(
+                                        stream.size() % chunk_token_count,
+                                        0,
+                                        "each chunk must have an integral hidden-feature row size"
+                                    );
+                                    let row_size = stream.size() / chunk_token_count;
+                                    let destination_start = chunk_offsets[index] * row_size;
+                                    let destination_end = destination_start + stream.size();
+                                    let feature_size = total_tokens * row_size;
+                                    if hidden_features[feature_index].is_none() {
+                                        hidden_features[feature_index] = Some(
+                                            command_buffer
+                                                .allocate_scratch(feature_size)
+                                                .map_err(TransformerEncodeError::Backend)?,
+                                        );
+                                    }
+                                    let feature = hidden_features[feature_index]
+                                        .as_mut()
+                                        .expect("captured feature buffer was allocated");
+                                    assert_eq!(feature.size(), feature_size, "hidden-feature row sizes must match");
+                                    command_buffer
+                                        .encode_copy(stream, feature.subrange_mut(destination_start..destination_end));
                                 }
                             }
                         }

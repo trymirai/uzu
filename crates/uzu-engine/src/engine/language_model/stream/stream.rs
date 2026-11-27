@@ -347,8 +347,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         // allow on-demand suffix length
         let max_batch_size = 1024;
         let standard_number_of_batches = input.len().div_ceil(max_batch_size);
-        let pipelined_chunk_lengths = if self.model.speculator.is_none()
-            && self.options.sampling_method.suffix_repetition_length().is_none()
+        let pipelined_chunk_lengths = if self.options.sampling_method.suffix_repetition_length().is_none()
             && self.model.decoder.supports_layerwise_prefill_pipelining()
         {
             self.model.engine.context.prefill_chunk_lengths(input.len()).filter(|lengths| {
@@ -429,11 +428,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 let output_range = is_final_group.then(|| (last_chunk_length - 1..last_chunk_length).into());
 
                 let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
-                let decoder_output = self.model.decoder.encode_chunks(
+                let mut decoder_output = self.model.decoder.encode_chunks(
                     &token_id_refs,
                     &batch_dim_refs,
                     output_range,
-                    None,
+                    hidden_feature_layer_indices.as_deref(),
                     &mut self.model_state.transformer_state,
                     &mut command_buffer,
                 )?;
@@ -444,11 +443,32 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     .transformer_state
                     .encode_accept(&accepted, &mut command_buffer)
                     .map_err(LanguageModelStreamError::Backend)?;
+
+                if let Some(speculator) = &self.model.speculator {
+                    let features = decoder_output
+                        .hidden_features
+                        .as_ref()
+                        .expect("speculative prefill captures target features for every chunk");
+                    let mut feature_start = 0u32;
+                    for range in &chunk_ranges {
+                        let feature_end = feature_start + range.len() as u32;
+                        speculator.encode_accept(
+                            self.model_state.speculator_state.as_mut().unwrap(),
+                            features.iter(),
+                            &(feature_start..feature_end).collect::<Box<[u32]>>(),
+                            &mut command_buffer,
+                        )?;
+                        feature_start = feature_end;
+                    }
+                }
+
                 for range in &chunk_ranges {
                     self.model_state.tokens.extend_from_slice(&input[range.clone()]);
                 }
 
                 if is_final_group {
+                    // Prompt features have already advanced the speculator state.
+                    decoder_output.hidden_features = None;
                     final_output = Some((decoder_output, final_batch_dim));
                     final_token_index = Some(pipeline_token_ids.len() + token_ids.len() - 1);
                 }
