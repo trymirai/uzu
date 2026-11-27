@@ -21,10 +21,10 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct LayerId(u32);
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StateId(u32);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CacheStep {
     layer: LayerId,
     state: StepState,
@@ -32,7 +32,7 @@ struct CacheStep {
     captures_hidden: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoopAction {
     /// A step will restart into this step.
     Start,
@@ -40,14 +40,14 @@ enum LoopAction {
 }
 
 /// A step that does *not* write anything into cache
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ReadoutStep {
     layer: LayerId,
     state: StateId,
     captures_hidden: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StepState {
     Owned(StateId),
     Shared(StateId),
@@ -63,14 +63,37 @@ struct LayerSchedule {
     has_readout_hiddens: bool,
 }
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ScheduleError {
+    #[error("Transformer has no steps to run")]
+    NoSteps,
+    #[error("Hidden layer capture {0} is out of order")]
+    HiddenIndicesOutOfOrder(u32),
+    #[error("Layer {0}'s state points to layer {1}, which does not own state")]
+    SharedNotIntoOwned(u32, u32),
+    #[error("Layer {0} has a shared KV cache, which is incompatible with looping architectures")]
+    LoopingAndSharedKVCache(u32),
+    #[error("Tried to reference layer index {index} out of {len} layers")]
+    LayerIndexOutOfBounds {
+        index: u32,
+        len: usize,
+    },
+    #[error("Looped layer indices skip layer {0}")]
+    SkippedLayerIndex(u32),
+}
+
 impl LayerSchedule {
-    fn new<B: Backend>(
-        layers: &[TransformerLayer<B>],
-        transformer_config: &TransformerConfig,
+    /// `kv_sources[layer]` is that layer's `kv_source_layer_index`.
+    fn new(
+        kv_sources: &[Option<u32>],
+        layer_order: Option<&[u32]>,
         hidden_feature_layer_indices: Option<&[u32]>,
-    ) -> Result<Self, TransformerNewError<B>> {
-        let mut cache_steps =
-            Vec::with_capacity(transformer_config.layer_order.as_ref().map(|ls| ls.len()).unwrap_or(layers.len()));
+    ) -> Result<Self, ScheduleError> {
+        if layer_order.map_or(kv_sources.is_empty(), <[u32]>::is_empty) {
+            return Err(ScheduleError::NoSteps);
+        }
+
+        let mut cache_steps = Vec::with_capacity(layer_order.map_or(kv_sources.len(), <[u32]>::len));
         let mut hidden_capture_count = 0;
 
         let mut hidden_targets = hidden_feature_layer_indices.into_iter().flatten();
@@ -86,15 +109,15 @@ impl LayerSchedule {
             true
         };
 
-        let owned_cache_count = if let Some(indices) = transformer_config.layer_order.as_ref() {
+        let owned_cache_count = if let Some(indices) = layer_order {
             for (i, &layer_index) in indices.iter().enumerate() {
-                let layer = layers.get(layer_index as usize).ok_or(TransformerNewError::LayerIndexOutOfBounds {
+                let kv_source = kv_sources.get(layer_index as usize).ok_or(ScheduleError::LayerIndexOutOfBounds {
                     index: layer_index,
-                    len: layers.len(),
+                    len: kv_sources.len(),
                 })?;
 
-                if layer.kv_source_layer_index.is_some() {
-                    return Err(TransformerNewError::LoopingAndSharedKVCache(layer_index));
+                if kv_source.is_some() {
+                    return Err(ScheduleError::LoopingAndSharedKVCache(layer_index));
                 }
 
                 let step = CacheStep {
@@ -110,22 +133,19 @@ impl LayerSchedule {
             indices.len() as u32
         } else {
             let mut state_index = 0;
-            let mut layer_to_state_id = vec![None; layers.len()];
-            for (layer_index, layer) in layers.iter().enumerate() {
+            let mut layer_to_state_id = vec![None; kv_sources.len()];
+            for (layer_index, &kv_source) in kv_sources.iter().enumerate() {
                 let step = CacheStep {
                     layer: LayerId(layer_index as u32),
-                    state: match layer.kv_source_layer_index {
+                    state: match kv_source {
                         Some(source_layer_index) => StepState::Shared(StateId(
                             layer_to_state_id
                                 .get(source_layer_index as usize)
-                                .ok_or(TransformerNewError::LayerIndexOutOfBounds {
+                                .ok_or(ScheduleError::LayerIndexOutOfBounds {
                                     index: source_layer_index,
-                                    len: layers.len(),
+                                    len: kv_sources.len(),
                                 })?
-                                .ok_or(TransformerNewError::SharedNotIntoOwned(
-                                    layer_index as u32,
-                                    source_layer_index,
-                                ))?,
+                                .ok_or(ScheduleError::SharedNotIntoOwned(layer_index as u32, source_layer_index))?,
                         )),
                         None => {
                             let id = StateId(state_index);
@@ -146,14 +166,14 @@ impl LayerSchedule {
         };
 
         if let Some(target) = hidden_target {
-            return Err(TransformerNewError::HiddenIndicesOutOfOrder(*target));
+            return Err(ScheduleError::HiddenIndicesOutOfOrder(*target));
         }
 
         // No need to check for looping and other invariants unless we have custom order
-        if transformer_config.layer_order.is_some() {
+        if layer_order.is_some() {
             let mut max_so_far = cache_steps[0].layer;
             if max_so_far != LayerId(0) {
-                return Err(TransformerNewError::SkippedLayerIndex(0));
+                return Err(ScheduleError::SkippedLayerIndex(0));
             }
             let mut starts = Vec::new();
             for step in 1..cache_steps.len() {
@@ -163,7 +183,7 @@ impl LayerSchedule {
 
                 if next.layer > max_so_far {
                     if next.layer.0 != max_so_far.0 + 1 {
-                        return Err(TransformerNewError::SkippedLayerIndex(max_so_far.0 + 1));
+                        return Err(ScheduleError::SkippedLayerIndex(max_so_far.0 + 1));
                     }
                     max_so_far = next.layer;
                 }
@@ -174,8 +194,8 @@ impl LayerSchedule {
                 }
             }
 
-            if max_so_far.0 != layers.len() as u32 - 1 {
-                return Err(TransformerNewError::SkippedLayerIndex(max_so_far.0 + 1));
+            if max_so_far.0 != kv_sources.len() as u32 - 1 {
+                return Err(ScheduleError::SkippedLayerIndex(max_so_far.0 + 1));
             }
 
             starts.sort_unstable_by_key(|&x| Reverse(x));
@@ -282,20 +302,8 @@ pub enum TransformerNewError<B: Backend> {
     UnappliedReadoutRht,
     #[error("Hidden features require an additive residual")]
     HiddenFeaturesRequireAdditiveResidual,
-    #[error("Hidden layer capture {0} is out of order")]
-    HiddenIndicesOutOfOrder(u32),
-    #[error("Layer {0}'s state points to layer {1}, which does not own state")]
-    SharedNotIntoOwned(u32, u32),
-    #[error("Layer {0} has a shared KV cache, which is incompatible with looping architectures")]
-    LoopingAndSharedKVCache(u32),
-    #[error("Tried to reference layer index {index} out of {len} layers")]
-    LayerIndexOutOfBounds {
-        index: u32,
-        len: usize,
-    },
-
-    #[error("Looped layer indices skip layer {0}")]
-    SkippedLayerIndex(u32),
+    #[error("Layer schedule error: {0}")]
+    Schedule(#[from] ScheduleError),
 }
 
 #[derive(Debug, Error)]
@@ -380,7 +388,9 @@ impl<B: Backend> Transformer<B> {
             return Err(TransformerNewError::HiddenFeaturesRequireAdditiveResidual);
         }
 
-        let schedule = LayerSchedule::new(&layers, transformer_config, hidden_feature_layer_indices)?;
+        let kv_sources = layers.iter().map(|layer| layer.kv_source_layer_index).collect::<Box<[_]>>();
+        let schedule =
+            LayerSchedule::new(&kv_sources, transformer_config.layer_order.as_deref(), hidden_feature_layer_indices)?;
 
         Ok(Self {
             layers: layers.into_boxed_slice(),
@@ -540,3 +550,7 @@ impl<B: Backend> Transformer<B> {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/encodable_block/layer_schedule_test.rs"]
+mod tests;
