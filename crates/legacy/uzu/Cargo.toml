@@ -139,6 +139,10 @@ test-tag.workspace = true
 name = "tool"
 path = "tests/tool/mod.rs"
 
+[[test]]
+name = "vision"
+path = "tests/vision/mod.rs"
+
 [build-dependencies]
 napi-build = { workspace = true, optional = true }
 pyo3-build-config = { workspace = true, optional = true }
