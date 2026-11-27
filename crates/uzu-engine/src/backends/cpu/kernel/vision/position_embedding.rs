@@ -1,7 +1,7 @@
 use half::bf16;
 use uzu_engine_macros::kernel;
 
-use crate::{data_type::DataTypeRepr, engine::language_model::vision::patch_grid::vision_patch_coordinates};
+use crate::{backends::cpu::kernel::vision::patch_grid::vision_patch_coordinates, data_type::DataTypeRepr};
 
 /// `index`-th of `count` points spread evenly over `[0, side - 1]`, computed as `torch.linspace` does,
 /// see `vision_linspace` in `metal/kernel/vision/position_embedding.metal`.

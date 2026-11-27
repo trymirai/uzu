@@ -2,9 +2,11 @@ use half::bf16;
 use uzu_engine_macros::kernel;
 
 use crate::{
-    backends::common::gpu_types::vision::{CHANNELS, MAX_CHANNEL_VALUE},
+    backends::{
+        common::gpu_types::vision::{CHANNELS, MAX_CHANNEL_VALUE},
+        cpu::kernel::vision::patch_grid::vision_patch_coordinates,
+    },
     data_type::DataTypeRepr,
-    engine::language_model::vision::patch_grid::vision_patch_coordinates,
 };
 
 /// Converts an RGB image into patch embedding input, see `metal/kernel/vision/patchify.metal`.

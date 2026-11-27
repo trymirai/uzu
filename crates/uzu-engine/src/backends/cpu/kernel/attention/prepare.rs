@@ -13,10 +13,10 @@ use crate::{
         cpu::kernel::{
             activation_transform::{INT8_SYMMETRIC_QUANTIZATION_MAXIMUM as INT8_MAX, hadamard_transform},
             attention::rope::{apply_rope, mrope_axis_offset},
+            vision::patch_grid::vision_patch_coordinates,
         },
     },
     data_type::DataTypeRepr,
-    engine::language_model::vision::patch_grid::vision_patch_coordinates,
 };
 
 #[kernel(AttentionPrepare)]
