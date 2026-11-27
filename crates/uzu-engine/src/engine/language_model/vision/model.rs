@@ -5,7 +5,8 @@ use crate::{
     backends::{
         Backend,
         common::{
-            CommandBuffer, CommandBufferEncoding, Kernels, gpu_types::vision::CHANNELS, kernel::VisionPatchifyKernel,
+            CommandBuffer, CommandBufferEncoding, Context, CpuBuffer, GlobalBufferCpuGpu, Kernels,
+            gpu_types::vision::CHANNELS, kernel::VisionPatchifyKernel,
         },
     },
     config::vision::VisionConfig,
@@ -23,7 +24,6 @@ use crate::{
         position_embedding::{VisionPositionEmbedding, VisionPositionEmbeddingNewError},
     },
     safetensors::ParameterTree,
-    utils::buffer::create_buffer_with_data,
 };
 
 #[derive(Debug, Error)]
@@ -180,10 +180,10 @@ impl<B: Backend> VisionModel<B> {
         )
         .await?;
 
-        let image_mean = create_buffer_with_data::<B, _>(context, &config.preprocessing_config.image_mean)
-            .map_err(VisionLoadError::Backend)?;
-        let image_std = create_buffer_with_data::<B, _>(context, &config.preprocessing_config.image_std)
-            .map_err(VisionLoadError::Backend)?;
+        let image_mean =
+            channel_buffer::<B>(context, &config.preprocessing_config.image_mean).map_err(VisionLoadError::Backend)?;
+        let image_std =
+            channel_buffer::<B>(context, &config.preprocessing_config.image_std).map_err(VisionLoadError::Backend)?;
 
         Ok(Self {
             config,
@@ -275,4 +275,13 @@ impl<B: Backend> VisionModel<B> {
             preprocessing_config.max_pixels,
         )
     }
+}
+
+fn channel_buffer<B: Backend>(
+    context: &B::Context,
+    values: &[f32; CHANNELS as usize],
+) -> Result<B::GlobalGpuBuffer, B::Error> {
+    let mut buffer = context.create_buffer_cpu_gpu(size_of_val(values))?;
+    buffer.copyin(values);
+    buffer.handoff()
 }
