@@ -63,6 +63,26 @@ impl<B: Backend> BatchTopology<B> {
         self.size
     }
 
+    /// How far the RoPE position moves when `accepted` rows of this batch are accepted
+    pub fn position_advance(
+        &self,
+        accepted: u32,
+    ) -> u32 {
+        match self.kind {
+            BatchKind::Image {
+                grid,
+                first_cell,
+            } if first_cell + accepted == grid.cell_count() => grid.width.max(grid.height),
+            BatchKind::Image {
+                ..
+            } => 0,
+            BatchKind::Flat
+            | BatchKind::Trie {
+                ..
+            } => accepted,
+        }
+    }
+
     pub fn full_accept(&self) -> bool {
         !matches!(self.kind, BatchKind::Trie { .. })
     }

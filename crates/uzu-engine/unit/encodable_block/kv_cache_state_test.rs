@@ -3,24 +3,21 @@ use uzu_engine_macros::uzu_test;
 use super::KVCacheState;
 use crate::{
     backends::cpu::Cpu,
-    encodable_block::{
-        batch_topology::{BatchKind, BatchTopology},
-        cell_grid::CellGrid,
-    },
+    encodable_block::{batch_topology::BatchTopology, cell_grid::CellGrid},
 };
 
 fn accept(
     state: &mut KVCacheState,
     indices: &[u32],
 ) -> Vec<(u32, u32)> {
-    state.accept(&BatchKind::<Cpu>::Flat, indices).into_iter().map(|copy| (copy.source, copy.destination)).collect()
+    state.accept(indices, indices.len() as u32).into_iter().map(|copy| (copy.source, copy.destination)).collect()
 }
 
 fn accept_all(
     state: &mut KVCacheState,
     batch: BatchTopology<Cpu>,
 ) {
-    state.accept(batch.kind(), &(0..batch.size()).collect::<Box<[u32]>>());
+    state.accept(&(0..batch.size()).collect::<Box<[u32]>>(), batch.position_advance(batch.size()));
 }
 
 #[uzu_test]

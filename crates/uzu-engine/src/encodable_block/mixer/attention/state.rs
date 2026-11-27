@@ -7,7 +7,7 @@ use crate::{
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
     encodable_block::{
-        batch_topology::{BatchKind, BatchTopology},
+        batch_topology::BatchTopology,
         mixer::{Mixer, MixerState, attention::Attention},
     },
 };
@@ -62,10 +62,10 @@ impl KVCacheState {
         self.ring_capacity.map_or(context_length, |capacity| context_length.min(capacity))
     }
 
-    fn accept<B: Backend>(
+    fn accept(
         &mut self,
-        batch_kind: &BatchKind<B>,
         accepted_indices: &[u32],
+        rope_advance: u32,
     ) -> Vec<Copy> {
         assert!(accepted_indices.is_sorted_by(|a, b| a < b), "unsorted accept");
         let suffix_base = self.prefix_len();
@@ -87,16 +87,7 @@ impl KVCacheState {
             self.context_length += 1;
         }
 
-        self.rope_position += match batch_kind {
-            &BatchKind::Image {
-                grid,
-                first_cell,
-            } if first_cell + count == grid.cell_count() => grid.width.max(grid.height),
-            BatchKind::Image {
-                ..
-            } => 0,
-            _ => count,
-        };
+        self.rope_position += rope_advance;
         copies
     }
 }
@@ -222,7 +213,8 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let copies = self.cache.accept(batch_dim.kind(), accepted_indices);
+        let rope_advance = batch_dim.position_advance(accepted_indices.len() as u32);
+        let copies = self.cache.accept(accepted_indices, rope_advance);
         assert!(
             copies
                 .iter()
