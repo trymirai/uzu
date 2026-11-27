@@ -37,7 +37,11 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<{% for language in languages %}**{{ language.name }}**{% if not loop.last %} | {% endif %}{% endfor %}\> \<{% for example in examples %}**{{ example.name }}**{% if not loop.last %} | {% endif %}{% endfor %}\>:
+{% if has_multiple_languages %}### Apple Neural Engine prefill experiment
+
+Build the Metal engine in release mode with `cargo build -p uzu-engine --release --features metal,cpu`. On Metal, `Engine::new()` enables eligible ANE offload; use `Engine::with_neural_engine(false)` for a GPU-only comparison. The experiment offloads supported H32 RHT W4 projections and dense MLPs, while unsupported layouts and layers continue on the GPU. Paired prefill handles at most two chunks; other requests use the serial path.
+
+{% endif %}You can run any example via `cargo tools example` \<{% for language in languages %}**{{ language.name }}**{% if not loop.last %} | {% endif %}{% endfor %}\> \<{% for example in examples %}**{{ example.name }}**{% if not loop.last %} | {% endif %}{% endfor %}\>:
 
 {% for example in examples %}{% if example.name != "quick-start" %}### {{ example.title }}
 
