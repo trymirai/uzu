@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 const WRAPPER_PATH: &str = "/usr/local/bin/mirai";
 const WRAPPER_MARKER: &str = "# mirai-cli-wrapper";
 
-const PROMPT_TEXT: &str = "Uzu Chat is trying to install its command line interface (CLI) tool.";
+const PROMPT_TEXT: &str = "Uzu is trying to install its command line interface (CLI) tool.";
 const RIGHT_SUFFIX: &str = "cli-symlink";
 // The wrapper resolves this one bundle; a build with another identifier owning
 // /usr/local/bin/mirai would point it at the wrong app.
@@ -26,6 +26,7 @@ fn wrapper_script() -> String {
 set -euo pipefail
 
 APP_CANDIDATES=(
+  "/Applications/Uzu.app"
   "/Applications/Mirai.app"
 )
 FOUND_APP="$(/usr/bin/mdfind "kMDItemCFBundleIdentifier == '{BUNDLE_ID}'" | /usr/bin/grep -m1 -E '\.app$' || true)"
@@ -46,7 +47,7 @@ for APP_PATH in "${{APP_CANDIDATES[@]}}"; do
   fi
 done
 
-echo "mirai: Uzu Chat CLI not found. Please reinstall Uzu Chat." 1>&2
+echo "mirai: Uzu CLI not found. Please reinstall Uzu." 1>&2
 exit 1
 "#
     )
@@ -140,7 +141,7 @@ pub async fn cli_install(app: AppHandle) -> AppResult<CliInstalled> {
     match wrapper_state() {
         WrapperState::Current => Ok(CliInstalled::AlreadyInstalled),
         WrapperState::Foreign => {
-            Err(AppError::msg(format!("{WRAPPER_PATH} is occupied by a binary Uzu Chat didn't install")))
+            Err(AppError::msg(format!("{WRAPPER_PATH} is occupied by a binary Uzu didn't install")))
         },
         WrapperState::Missing => {
             crate::logger::info("cli-installer:prompt", Some(serde_json::json!({ "reason": "settings" })));

@@ -23,7 +23,7 @@ export async function exportAllChatsZip(): Promise<boolean> {
   if (!data) return false;
 
   const humanDate = format(Date.now(), "dd.MM.yyyy HH.mm");
-  const defaultName = `mirai-chats ${humanDate}.zip`;
+  const defaultName = `uzu-chats ${humanDate}.zip`;
 
   if (!platformInfo.features.fileSystem) {
     triggerBrowserDownload(data, defaultName);

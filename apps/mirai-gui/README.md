@@ -1,4 +1,4 @@
-# Uzu Chat
+# uzu app
 
 Desktop chat app for local LLMs on the [uzu](https://github.com/trymirai/uzu) engine.
 Tauri v2, React, Rust.
@@ -27,7 +27,7 @@ pnpm web:dev  # frontend in a browser without the engine: no models, no chats
 
 ## Preview a fresh start on macOS
 
-Quit Uzu Chat, the CLI, and other apps using the shared model cache. From the
+Quit the uzu app, the CLI, and other apps using the shared model cache. From the
 repository root, move the current state into a new backup directory:
 
 ```bash
@@ -62,7 +62,7 @@ unsigned `.deb` and NSIS installers. The app and bundled CLI are built from the 
 commit using its existing version. Manual runs do not create a release or tag,
 change versions, or publish an updater manifest.
 
-These builds use the normal Uzu Chat app identity, local data, and release update
+These builds use the normal uzu app identity, local data, and release update
 feed; installing one replaces the regular app. Published engine releases still
 use this workflow to build and publish the app automatically.
 
