@@ -154,8 +154,8 @@ std::vector<llama_token> LlamaEngine::tokenize(const BenchRequest& request) cons
     }
     if (json.contains("tool_choice")) {
         const auto& tool_choice = json.at("tool_choice");
-        if (tool_choice.is_string()) {
-            inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tool_choice.get<std::string>());
+        if (!tool_choice.is_null()) {
+            inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tool_choice, inputs.tools);
         }
         inputs.chat_template_kwargs["tool_choice"] = tool_choice.dump();
     }
