@@ -114,7 +114,7 @@ dependencies = [
 [[package]]
 name = "ane"
 version = "0.1.0"
-source = "git+https://github.com/computer-graphics-tools/ane?rev=4c23c70b07bf729b07538a9099eaf8a0dd00df7d#4c23c70b07bf729b07538a9099eaf8a0dd00df7d"
+source = "git+https://github.com/computer-graphics-tools/ane?rev=76fd1a1292c0db501eef838a1d19d86d36403f4d#76fd1a1292c0db501eef838a1d19d86d36403f4d"
 dependencies = [
  "block2",
  "bytemuck",
