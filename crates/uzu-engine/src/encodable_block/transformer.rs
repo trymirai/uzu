@@ -106,14 +106,24 @@ impl<B: Backend> TransformerState<B> {
         &mut self,
         layer_index: u32,
     ) -> MaybeMut<'_, dyn MixerState<B>> {
-        match &mut self.layer_states[layer_index as usize] {
-            TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
-            TransformerLayerStateType::Shared(owned_layer_index) => {
-                let TransformerLayerStateType::Owned(owned_layer) = &self.layer_states[*owned_layer_index as usize]
-                else {
+        let layer_index = layer_index as usize;
+        let owned_layer_index = match &self.layer_states[layer_index] {
+            TransformerLayerStateType::Owned(_) => None,
+            TransformerLayerStateType::Shared(owned_layer_index) => Some(*owned_layer_index as usize),
+        };
+
+        match owned_layer_index {
+            Some(owned_layer_index) => {
+                let TransformerLayerStateType::Owned(owned_layer) = &self.layer_states[owned_layer_index] else {
                     panic!("shared layer doesn't point to an owned layer");
                 };
                 MaybeMut::Const(owned_layer.as_ref())
+            },
+            None => {
+                let TransformerLayerStateType::Owned(layer_state) = &mut self.layer_states[layer_index] else {
+                    unreachable!("layer state is still owned");
+                };
+                MaybeMut::Mut(layer_state.as_mut())
             },
         }
     }
