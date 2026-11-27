@@ -1,6 +1,7 @@
 use crate::{
-    backends::common::{Backend, Context, CpuBuffer, GlobalBufferCpuGpu},
+    backends::common::{Backend, Context, CpuBuffer, GlobalBufferCpuGpu, gpu_types::rope::RoPEGridParams},
     config::rope::AnyRoPEConfig,
+    encodable_block::batch_topology::BatchKind,
 };
 
 pub struct RoPE<B: Backend> {
@@ -125,6 +126,31 @@ impl<B: Backend> RoPE<B> {
             max_sequence_length,
             frequency_pairs_per_axis: None,
             interleaved_axes: false,
+        })
+    }
+
+    pub fn grid_params(
+        &self,
+        batch_kind: &BatchKind<B>,
+    ) -> Option<RoPEGridParams> {
+        let [_, height_pairs, width_pairs] = self.frequency_pairs_per_axis?;
+        let (grid_width, grid_height, merge_size, first_cell) = match batch_kind {
+            &BatchKind::Image {
+                width,
+                height,
+                merge_size,
+                first_cell,
+            } => (width, height, merge_size, first_cell),
+            _ => (1, 1, 1, 0),
+        };
+        Some(RoPEGridParams {
+            grid_width,
+            grid_height,
+            first_cell,
+            height_pairs,
+            width_pairs,
+            merge_size,
+            interleaved_axes: u32::from(self.interleaved_axes),
         })
     }
 }

@@ -4,10 +4,7 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::{
-            qkv_norm::{QKVL2Op, QKVNormParams},
-            rope::RoPEGridParams,
-        },
+        gpu_types::qkv_norm::{QKVL2Op, QKVNormParams},
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
             attention::KeyBlocks,
@@ -349,27 +346,7 @@ impl<B: Backend> Attention<B> {
             &self.prepare
         };
 
-        let rope_grid_params = rope.and_then(|rope| {
-            let [_, height_pairs, width_pairs] = rope.frequency_pairs_per_axis?;
-            let (grid_width, grid_height, merge_size, first_cell) = match batch_kind {
-                &BatchKind::Image {
-                    width,
-                    height,
-                    merge_size,
-                    first_cell,
-                } => (width, height, merge_size, first_cell),
-                _ => (1, 1, 1, 0),
-            };
-            Some(RoPEGridParams {
-                grid_width,
-                grid_height,
-                first_cell,
-                height_pairs,
-                width_pairs,
-                merge_size,
-                interleaved_axes: u32::from(rope.interleaved_axes),
-            })
-        });
+        let rope_grid_params = rope.and_then(|rope| rope.grid_params(batch_kind));
         let rope_position_offset = rope.map(|rope| {
             if rope.frequency_pairs_per_axis.is_some() {
                 cache.rope_position()
