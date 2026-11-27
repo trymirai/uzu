@@ -148,7 +148,8 @@ fn run<B: Backend, T: DataTypeRepr>(
     let mut output = create_buffer::<B, T>(&context, (suffix * config.num_q_heads * dim) as usize);
     command.encode_copy(&result, &mut output);
     submit_command_buffer(command);
-    let tolerance = 5e-3;
+    // Just over two bf16 steps in [0.5, 1).
+    let tolerance = 8e-3;
     // MXU also quantizes attention probabilities to u8.
     #[cfg(backend = "metal")]
     let tolerance = if kernel.kv_layout().backend_opaque_layout == KVLayout::MxuTiled as u32 {
