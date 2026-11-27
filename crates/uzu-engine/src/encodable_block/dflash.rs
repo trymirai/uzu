@@ -317,7 +317,8 @@ impl<B: Backend> DFlash<B> {
         let batch_topology = BatchTopology::flat(batch_size);
 
         let mut stream = token_embeddings;
-        for (layer, mixer_state) in self.layers.iter().zip(state.layer_states.iter_mut()) {
+        for (layer_index, (layer, mixer_state)) in self.layers.iter().zip(state.layer_states.iter_mut()).enumerate() {
+            let command_buffer = &mut *command_buffer.debug_group(&format!("layer {layer_index}"));
             mixer_state.prepare(state.context_length, batch_size).map_err(DFlashEncodeError::Backend)?;
             stream = layer.encode(
                 stream,

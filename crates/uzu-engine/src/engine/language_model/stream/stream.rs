@@ -59,7 +59,7 @@ enum GenerationJob<B: Backend> {
         output_tokens: B::GlobalGpuBuffer,
         batch_dim: BatchTopology<B>,
         input_token_ids: Option<B::GlobalGpuBuffer>,
-        hidden_features: Option<Box<[B::ScratchBuffer]>>,
+        hidden_features: Box<[B::ScratchBuffer]>,
         capture_span: Option<CaptureMatcherSpan>,
         pendings: Box<[<<B as Backend>::CommandBuffer as CommandBuffer>::Pending]>,
     },
@@ -72,7 +72,7 @@ struct ResolvedJob<B: Backend> {
     output_norm_buffer: Option<B::ScratchBuffer>,
     output_tokens_buffer: B::GlobalGpuBuffer,
     batch_dim: BatchTopology<B>,
-    hidden_features: Option<Box<[B::ScratchBuffer]>>,
+    hidden_features: Box<[B::ScratchBuffer]>,
     accepted_indices_and_input_tokens: Option<(Box<[u32]>, Box<[u64]>)>,
     capture_span: Option<CaptureMatcherSpan>,
 }
@@ -388,7 +388,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             None
         };
 
-        let output_norm = decoder_output.final_hidden;
+        let output_norm = decoder_output.final_hidden.filter(|_| self.model.speculator.is_some());
         let sampled_row = batch_dim.size() - 1;
         let output_token = self
             .model
@@ -581,15 +581,11 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             .prepare(context_length, batch_dim.size())
             .map_err(LanguageModelStreamError::Backend)?;
 
-        let hidden_feature_layer_indices =
-            self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
-
         let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
         let decoder_output = self.model.decoder.encode(
             &token_ids,
             &batch_dim,
             Some((0..batch_dim.size()).into()),
-            hidden_feature_layer_indices,
             &mut self.model_state.transformer_state,
             &mut command_buffer,
         )?;
@@ -714,7 +710,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
                 speculator.encode_accept(
                     speculator_state,
-                    decoder_output.hidden_features.as_ref().unwrap().iter(),
+                    decoder_output.hidden_features.as_ref().iter(),
                     &(0..batch_dim.size()).collect::<Box<[u32]>>(),
                     &mut command_buffer,
                 )?;
@@ -741,7 +737,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         }
 
         let new_job = GenerationJob::Pending {
-            output_norm: decoder_output.final_hidden,
+            output_norm: decoder_output.final_hidden.filter(|_| self.model.speculator.is_some()),
             output_tokens,
             batch_dim,
             input_token_ids: Some(token_ids),
@@ -789,7 +785,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         if let Some(speculator) = self.model.speculator.as_ref() {
             speculator.encode_accept(
                 self.model_state.speculator_state.as_mut().unwrap(),
-                resolved.hidden_features.as_ref().unwrap().iter(),
+                resolved.hidden_features.as_ref().iter(),
                 accepted_token_indices,
                 &mut command_buffer,
             )?;
@@ -839,13 +835,12 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
             &token_ids,
             &batch_dim,
             sample.then(|| (row_count - 1..row_count).into()),
-            model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
             &mut model_state.transformer_state,
             command_buffer,
         )?;
         drop(encode_span);
 
-        Self::accept_prefill(model, model_state, &batch_dim, output.hidden_features.as_deref(), command_buffer)?;
+        Self::accept_prefill(model, model_state, &batch_dim, &output.hidden_features, command_buffer)?;
         model_state.tokens.extend_from_slice(tokens);
 
         if !sample && let Some(length) = options.sampling_method.suffix_repetition_length() {
@@ -890,14 +885,13 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                     None::<&B::ScratchBuffer>,
                     &batch_dim,
                     None,
-                    model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
                     Some(&mut model_state.transformer_state),
                     command_buffer,
                 )
                 .map_err(DecoderError::from)?;
             drop(encode_span);
 
-            Self::accept_prefill(model, model_state, &batch_dim, output.hidden_features.as_deref(), command_buffer)?;
+            Self::accept_prefill(model, model_state, &batch_dim, &output.hidden_features, command_buffer)?;
         }
         Ok(())
     }
@@ -906,7 +900,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         model: &LanguageModel<B>,
         model_state: &mut LanguageModelState<B>,
         batch_dim: &BatchTopology<B>,
-        hidden_features: Option<&[B::ScratchBuffer]>,
+        hidden_features: &[B::ScratchBuffer],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), LanguageModelStreamError<B>> {
         let rows = (0..batch_dim.size()).collect::<Box<[_]>>();
@@ -917,7 +911,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         if let Some(speculator) = model.speculator.as_ref() {
             speculator.encode_accept(
                 model_state.speculator_state.as_mut().unwrap(),
-                hidden_features.expect("speculator requires hidden features").iter(),
+                hidden_features.iter(),
                 &rows,
                 command_buffer,
             )?;

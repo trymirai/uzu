@@ -77,6 +77,7 @@ impl<B: Backend> Classifier<B> {
             data_type,
             None,
             &config.transformer_config,
+            None,
             &parameter_tree.subtree("transformer"),
             context,
         )
@@ -140,7 +141,6 @@ impl<B: Backend> Classifier<B> {
                 None::<&B::ScratchBuffer>,
                 &batch_topology,
                 Some((0..batch_dim).into()),
-                None,
                 None,
                 command_buffer,
             )?
