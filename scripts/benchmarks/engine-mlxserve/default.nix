@@ -48,7 +48,8 @@ in
       "build-benchmarks.zig"
       "-Doptimize=ReleaseFast"
       "-Dcommon-dir=${../common-cpp/src}"
-      "-Dmlx-dir=${mlxc}"
+      "-Dmlx-dir=${mlx}"
+      "-Dmlxc-dir=${mlxc}"
     ];
     postFixup = ''
       mkdir "$out/libexec"
