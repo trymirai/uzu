@@ -160,7 +160,7 @@ fn attention_matches_cpu() {
             let tail_start =
                 |node: usize| (prefix + usize::from(!use_trie) * (node + 1)) / COMPRESSION_RATIO * COMPRESSION_RATIO;
             // q16 exercises dense parity with every block selected.
-            let dropped = |node: usize, block: usize| q_heads != 16 && (block * 7 + node) % 5 == 0;
+            let dropped = |node: usize, block: usize| q_heads != 16 && (block * 7 + node).is_multiple_of(5);
             let completes = |node: usize, a: usize| {
                 (prefix + trie[a].height as usize + 1).is_multiple_of(COMPRESSION_RATIO)
                     && (trie[a].trie_start as usize..=trie[a].trie_end as usize).contains(&node)

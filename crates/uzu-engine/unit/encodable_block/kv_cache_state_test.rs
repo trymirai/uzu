@@ -52,12 +52,12 @@ fn ring_accept_over_capacity_keeps_last() {
 #[uzu_test]
 fn rope_position_after_image() {
     // 7 text tokens, then a 5×3 image in one batch or in two: HF puts the image at 7 and the next token at 7 + 5
-    for chunks in [vec![0..15], vec![0..6, 6..15]] {
+    for chunk_bounds in [vec![0, 15], vec![0, 6, 15]] {
         let mut state = KVCacheState::new(0, None);
         accept_all(&mut state, BatchTopology::flat(7));
-        for cells in chunks {
+        for cells in chunk_bounds.windows(2) {
             assert_eq!(state.rope_position(), 7);
-            accept_all(&mut state, BatchTopology::image(CellGrid::new(5, 3, 1), cells));
+            accept_all(&mut state, BatchTopology::image(CellGrid::new(5, 3, 1), cells[0]..cells[1]));
         }
         assert_eq!((state.context_length(), state.rope_position()), (22, 12));
         accept_all(&mut state, BatchTopology::flat(1));
