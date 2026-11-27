@@ -66,7 +66,7 @@ keisoku = { path = "crates/legacy/keisoku", default-features = false }
 kanka = { path = "crates/legacy/kanka", default-features = false }
 kiban = { path = "crates/legacy/kiban", default-features = false }
 uzu = { path = "crates/legacy/uzu", default-features = false }
-ane = { git = "https://github.com/computer-graphics-tools/ane", rev = "790cd7bf21ce76a36fc110a738cbdd69183e98c1", features = ["metal"] }
+ane = { git = "https://github.com/computer-graphics-tools/ane", rev = "e75e4737cccd042998a3dcfbfa921ef90e747d33", features = ["metal"] }
 xgrammar = { package = "xgrammar-rs", version = "0.2.8", features = ["tokenizers"] }
 half = { version = "2.7.1", features = ["bytemuck", "num-traits"] }
 ndarray = "0.17.2"
