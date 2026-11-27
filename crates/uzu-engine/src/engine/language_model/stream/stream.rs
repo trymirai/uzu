@@ -18,7 +18,9 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        batch_topology::BatchTopology, decoder::DecoderEncodeOutput, mixer::attention::ATTENTION_SUFFIX_CAPACITY,
+        batch_topology::BatchTopology,
+        decoder::{DecoderEncodeOutput, DecoderError},
+        mixer::attention::ATTENTION_SUFFIX_CAPACITY,
         sampling::SamplingMethod,
     },
     engine::language_model::{
@@ -881,15 +883,19 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 &mut embedded,
             );
             let batch_dim = BatchTopology::image(image.grid, start..start + length);
-            let output = model.decoder.encode_embedded(
-                embedded,
-                None::<&B::ScratchBuffer>,
-                &batch_dim,
-                None,
-                model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
-                Some(&mut model_state.transformer_state),
-                command_buffer,
-            )?;
+            let output = model
+                .decoder
+                .transformer()
+                .encode(
+                    embedded,
+                    None::<&B::ScratchBuffer>,
+                    &batch_dim,
+                    None,
+                    model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
+                    Some(&mut model_state.transformer_state),
+                    command_buffer,
+                )
+                .map_err(DecoderError::from)?;
             drop(encode_span);
 
             Self::accept_prefill(model, model_state, &batch_dim, output.hidden_features.as_deref(), command_buffer)?;
