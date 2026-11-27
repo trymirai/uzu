@@ -421,11 +421,7 @@ impl<B: Backend> Transformer<B> {
 
                     if step < layer_count {
                         let layer = &self.layers[step];
-                        let layer_state = if let Some(state) = state.as_deref_mut() {
-                            Some(state.layer_state(layer.layer_index))
-                        } else {
-                            None
-                        };
+                        let layer_state = state.as_deref_mut().map(|state| state.layer_state(layer.layer_index));
                         let Some(ChunkState::Stream(stream)) = chunks[index].state.take() else {
                             unreachable!("previous layer stream is available")
                         };

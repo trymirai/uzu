@@ -69,17 +69,17 @@ impl Ane {
         mlp: DenseMlp<Metal>,
     ) -> Box<dyn Mlp<Metal>> {
         let mlp = Arc::new(mlp);
-        if let Some((up, down)) = mlp.rht_w4() {
-            if let Some(layer) = self.offload(|| {
+        if let Some((up, down)) = mlp.rht_w4()
+            && let Some(layer) = self.offload(|| {
                 let (up, down) = (rht(&up), rht(&down));
                 // SAFETY: the immutable regions are owned by mlp on this context's device.
                 unsafe { self.session.bind_ffn(&up, &down, mlp.clone(), || new_host(context)) }
-            }) {
-                return Box::new(Offloaded {
-                    inner: mlp,
-                    layer,
-                });
-            }
+            })
+        {
+            return Box::new(Offloaded {
+                inner: mlp,
+                layer,
+            });
         }
         Box::new(Arc::try_unwrap(mlp).unwrap_or_else(|_| unreachable!("unbound MLP has one owner")))
     }
