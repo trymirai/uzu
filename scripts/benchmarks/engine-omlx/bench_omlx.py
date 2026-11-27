@@ -60,7 +60,8 @@ class OMLXEngine(InferenceEngine):
         if config.draft_model is not None:
             draft_path = get_model_path(config.draft_model, config.draft_revision)
             draft = json.loads((Path(draft_path) / "config.json").read_text())
-            max_depth = int(draft.get("block_size", 0)) - 1
+            block_size = draft.get("block_size") or (draft.get("dflash_config") or {}).get("block_size") or 0
+            max_depth = int(block_size) - 1
             if max_depth < 1:
                 raise ValueError("DFlash requires a draft checkpoint with block_size >= 2")
 
@@ -266,7 +267,9 @@ class OMLXEngine(InferenceEngine):
             prefill_tps=prompt_tokens / time_to_first_token if time_to_first_token > 0.0 else 0.0,
             decode_tps=(completion_tokens - 1) / decode_time if decode_time > 0.0 else 0.0,
             tokens_per_forward_pass=tokens_per_forward_pass,
-            forwards_per_second=decode_forwards / decode_time if speculative and decode_forwards else None,
+            forwards_per_second=(
+                decode_forwards / decode_time if speculative and decode_forwards and decode_time > 0.0 else None
+            ),
             duration=time_total,
             energy_gpu=energy_gpu,
             memory_used=mx.get_peak_memory(),

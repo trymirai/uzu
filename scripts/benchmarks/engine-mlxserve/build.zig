@@ -9,7 +9,11 @@ pub fn build(b: *std.Build) void {
     const ios = target.result.os.tag == .ios;
     const mlx_dir = b.pathResolve(&.{
         b.root.root_dir.path orelse ".",
-        b.option([]const u8, "mlx-dir", "MLX and mlx-c install prefix") orelse "lib/mlx",
+        b.option([]const u8, "mlx-dir", "MLX install prefix") orelse "lib/mlx",
+    });
+    const mlxc_dir = b.pathResolve(&.{
+        b.root.root_dir.path orelse ".",
+        b.option([]const u8, "mlxc-dir", "mlx-c install prefix") orelse mlx_dir,
     });
     const sdk = std.mem.trim(u8, b.run(&.{ "xcrun", "--sdk", if (ios) "iphoneos" else "macosx", "--show-sdk-path" }), " \r\n");
     const common_dir = b.option([]const u8, "common-dir", "Shared benchmark sources") orelse "../../../common-cpp/src";
@@ -36,6 +40,7 @@ pub fn build(b: *std.Build) void {
         .link_libcpp = true,
     });
     mod.addOptions("build_options", options);
+    mod.addImport("mlx_stamp", @import("build/config.zig").mlxStampModule(b, "lib/mlx/.version"));
     const libs = @import("build/libs.zig");
     libs.addVendoredSources(b, mod);
     mod.addImport("stb", libs.addCHeaderModule(b, b.path("lib/stb_image.h"), b.path("lib"), target, optimize, sdk));
@@ -108,16 +113,30 @@ pub fn build(b: *std.Build) void {
     });
     mod.addIncludePath(.{ .cwd_relative = b.pathResolve(&.{common_dir}) });
     mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "include" }) });
-    mod.addFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk}) });
+    mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ mlxc_dir, "include" }) });
+    mod.addSystemFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sdk}) });
     if (ios) {
         const lib = b.addLibrary(.{ .name = "engine-mlxserve", .root_module = mod, .linkage = .static });
         lib.bundle_compiler_rt = true;
         b.installArtifact(lib);
     } else {
+        const csrc = "src/sdk/weights/streamed/csrc";
+        const stream_cxx: []const []const u8 = &.{ "-std=c++20", "-O2", "-D_METAL_", "-DACCELERATE_NEW_LAPACK", "-fno-sanitize=all", "-Wall", "-Wno-unused-parameter", "-Wno-deprecated-declarations" };
+        mod.addCSourceFile(.{ .file = b.path(csrc ++ "/q3_lookahead4_exl3.c"), .flags = &.{ "-O2", "-std=c11", "-Wall", "-Wextra", "-Werror", "-pthread" } });
+        mod.addCSourceFile(.{ .file = b.path(csrc ++ "/q3_event_shim.mm"), .flags = &.{ "-O2", "-Wall", "-Wextra", "-Werror", "-fno-objc-arc" } });
+        mod.addCSourceFile(.{ .file = b.path(csrc ++ "/mlx_event_shim.cpp"), .flags = stream_cxx });
+        mod.addCSourceFile(.{ .file = b.path(csrc ++ "/mlx_alloc_shim.cpp"), .flags = stream_cxx });
+        mod.addIncludePath(b.path(csrc));
+        mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "include/metal_cpp" }) });
+        mod.addIncludePath(b.path("lib/mlxc-src"));
+
         mod.linkSystemLibrary("webp", .{ .use_pkg_config = .force });
+        mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ mlxc_dir, "lib" }) });
+        mod.addRPath(.{ .cwd_relative = b.pathJoin(&.{ mlxc_dir, "lib" }) });
         mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "lib" }) });
         mod.addRPath(.{ .cwd_relative = b.pathJoin(&.{ mlx_dir, "lib" }) });
         mod.linkSystemLibrary("mlxc", .{ .use_pkg_config = .no });
+        mod.linkSystemLibrary("mlx", .{ .use_pkg_config = .no });
         mod.linkSystemLibrary("IOReport", .{ .use_pkg_config = .no });
         inline for (.{ "IOKit", "CoreFoundation", "Foundation", "Metal", "IOSurface", "Accelerate" }) |name| {
             mod.linkFramework(name, .{});
