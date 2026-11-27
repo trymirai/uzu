@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
-use regex::Regex;
 
 use crate::{
     configs::{PlatformsConfig, WorkspaceManifest},
-    sync::SyncTask,
+    sync::{SyncTask, replace::replace_required},
 };
 
 pub struct SwiftPackageSyncTask;
@@ -24,14 +23,8 @@ impl SyncTask for SwiftPackageSyncTask {
             .get("MACOSX_DEPLOYMENT_TARGET")
             .context("Missing MACOSX_DEPLOYMENT_TARGET in platforms.toml [envs]")?;
 
-        let mut output = input.to_string();
-        output = Regex::new(r#"\.iOS\("[^"]*"\)"#)?.replace(&output, format!(r#".iOS("{ios}")"#).as_str()).into_owned();
-        output = Regex::new(r#"\.macCatalyst\("[^"]*"\)"#)?
-            .replace(&output, format!(r#".macCatalyst("{ios}")"#).as_str())
-            .into_owned();
-        output = Regex::new(r#"\.macOS\("[^"]*"\)"#)?
-            .replace(&output, format!(r#".macOS("{macos}")"#).as_str())
-            .into_owned();
-        Ok(output)
+        let output = replace_required(input, r#"\.iOS\("[^"]*"\)"#, format!(r#".iOS("{ios}")"#))?;
+        let output = replace_required(&output, r#"\.macCatalyst\("[^"]*"\)"#, format!(r#".macCatalyst("{ios}")"#))?;
+        replace_required(&output, r#"\.macOS\("[^"]*"\)"#, format!(r#".macOS("{macos}")"#))
     }
 }

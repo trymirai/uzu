@@ -31,7 +31,6 @@
     "macOS": {
       "files": { "Resources/Assets.car": "icons/Assets.car" },
       "signingIdentity": "-",
-      "minimumSystemVersion": "26.4",
       "dmg": {
         "background": "dmg-background.tiff",
         "windowSize": { "width": 638, "height": 398 },
