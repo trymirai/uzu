@@ -90,6 +90,8 @@ tokio-stream.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+image.workspace = true
+zune-heic.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 parking_lot = { workspace = true, features = ["send_guard"] }
@@ -136,6 +138,10 @@ test-tag.workspace = true
 [[test]]
 name = "tool"
 path = "tests/tool/mod.rs"
+
+[[test]]
+name = "vision"
+path = "tests/vision/mod.rs"
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }

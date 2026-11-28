@@ -31,7 +31,16 @@ pub struct StreamConfig {
     pub grammar_trigger: Option<String>,
 }
 
-pub type StreamInput = Vec<u64>;
+pub struct StreamImage {
+    pub url: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Default)]
+pub struct StreamInput {
+    pub tokens: Vec<u64>,
+    pub images: Vec<StreamImage>,
+}
 pub type StreamOutput = TokenStreamOutput;
 pub type StreamMetrics = Option<TokenStreamMetrics>;
 
@@ -55,6 +64,13 @@ pub trait Instance:
         &self,
         config: ChatConfig,
     ) -> Box<dyn Instance>;
+
+    fn with_image_pad_token_id(
+        &self,
+        image_pad_token_id: u64,
+    ) -> Result<Box<dyn Instance>, Error> {
+        Err(format!("Backend does not support image pad token {image_pad_token_id}").into())
+    }
 
     fn tokenizer(&self) -> Arc<Tokenizer>;
 

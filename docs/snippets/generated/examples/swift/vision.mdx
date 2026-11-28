@@ -1,0 +1,36 @@
+```swift
+import Foundation
+import Uzu
+
+public func runVision() async throws {
+    let engineConfig = EngineConfig.create()
+    let engine = try await Engine.create(config: engineConfig)
+
+    guard let model = try await engine.model(identifier: "trymirai/Qwen3.5-9B-M-Vision") else {
+        return
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+
+    let session = try await engine.chat(model: model, config: .create())
+    let messages = [
+        ChatMessage.system()
+            .withText(text: "You are a helpful assistant")
+            .withReasoningEffort(reasoningEffort: .disabled),
+        ChatMessage.user()
+            .withBlock(block: .image(url: "https://assets.trymirai.com/images/artifacts/photo-cat.jpeg"))
+            .withBlock(block: .image(url: "https://assets.trymirai.com/images/artifacts/photo-london.jpeg"))
+            .withText(text: "What's on the images?")
+    ]
+    let replies = try await session.reply(input: messages, config: ChatReplyConfig.create().withTokenLimit(tokenLimit: 256))
+    guard let message = replies.last?.message else {
+        return
+    }
+
+    print("Reasoning: \(message.reasoning() ?? "")")
+    print("Text: \(message.text() ?? "")")
+}
+```

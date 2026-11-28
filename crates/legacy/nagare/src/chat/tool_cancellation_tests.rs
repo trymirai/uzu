@@ -26,6 +26,7 @@ impl State for EmptyState {}
 // renderer/parser. Only the model's sampled tokens are scripted.
 struct FunctionGemma {
     tokenizer: Arc<Tokenizer>,
+    fail_next_prefill: StdMutex<bool>,
     cached_tokens: StdMutex<Vec<u32>>,
     prompts: StdMutex<Vec<String>>,
 }
@@ -51,8 +52,11 @@ impl BackendInstance for FunctionGemma {
         _cancel_token: CancellationToken,
     ) -> Pin<Box<dyn InstanceStream<Item = Result<StreamOutput, Error>, Metrics = Self::StreamMetrics> + Send + 'a>>
     {
+        if std::mem::take(&mut *self.fail_next_prefill.lock().unwrap()) {
+            return Box::pin(NoMetricsStream::new(futures::stream::iter([Err("prefill failed".to_string().into())])));
+        }
         let mut cached = self.cached_tokens.lock().unwrap();
-        cached.extend(input.iter().map(|id| *id as u32));
+        cached.extend(input.tokens.iter().map(|id| *id as u32));
         let prompt = self.tokenizer.decode(&cached, false).unwrap();
         let output = if prompt.contains("Follow up") {
             "Answer<end_of_turn>"
@@ -81,6 +85,7 @@ impl TokenInstance for FunctionGemma {
     ) -> Box<dyn TokenInstance> {
         Box::new(Self {
             tokenizer: self.tokenizer.clone(),
+            fail_next_prefill: StdMutex::default(),
             cached_tokens: StdMutex::new(Vec::new()),
             prompts: StdMutex::new(Vec::new()),
         })
@@ -129,6 +134,7 @@ async fn session() -> (ChatSession, Arc<FunctionGemma>) {
     config.tokens.eos_token_id = tokenizer.token_to_id("<eos>");
     let backend = Arc::new(FunctionGemma {
         tokenizer: Arc::new(tokenizer),
+        fail_next_prefill: StdMutex::default(),
         cached_tokens: StdMutex::new(Vec::new()),
         prompts: StdMutex::new(Vec::new()),
     });
@@ -250,4 +256,26 @@ async fn normal_tool_continuation_keeps_the_existing_model_turn_open() {
     assert_eq!(prompts.len(), 2);
     assert!(prompts[1].ends_with("<end_function_response>"));
     assert_eq!(prompts[1].matches("<start_of_turn>model\n").count(), 1);
+}
+
+#[tokio::test]
+async fn retry_after_prefill_failure_resends_the_prompt() {
+    let (session, backend) = session().await;
+    let mut instance = session.instance.lock().await;
+    let Instance::Token(token) = &mut *instance else {
+        unreachable!()
+    };
+    let messages = [
+        ChatMessage::developer()
+            .with_tool_namespaces(session.tool_registry.as_ref().unwrap().lock().await.get_namespaces()),
+        ChatMessage::user().with_text("Follow up".into()),
+    ];
+    *backend.fail_next_prefill.lock().unwrap() = true;
+    for expect_error in [true, false] {
+        let mut stream = token.stream(&messages, ChatReplyConfig::default(), CancellationToken::new()).await;
+        let result = stream.next().await.unwrap();
+        assert_eq!(result.is_err(), expect_error, "{:?}", result.err());
+        while stream.next().await.is_some() {}
+    }
+    assert!(backend.prompts.lock().unwrap()[0].contains("Follow up"));
 }

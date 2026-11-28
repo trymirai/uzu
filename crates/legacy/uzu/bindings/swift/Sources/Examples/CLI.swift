@@ -10,7 +10,7 @@ struct Example: AsyncParsableCommand {
         version: "1.0.0"
     )
 
-    @Argument(help: "Mode: chat | chat-cloud | chat-shared-instance | chat-structured-output | decision | quick-start | tool-calls",
+    @Argument(help: "Mode: chat | chat-cloud | chat-shared-instance | chat-structured-output | decision | quick-start | tool-calls | vision",
     transform: { $0.lowercased() })
     var mode: String = "chat"
 
@@ -30,6 +30,8 @@ struct Example: AsyncParsableCommand {
             try await runDecision()
         case "tool-calls":
             try await runToolCalls()
+        case "vision":
+            try await runVision()
         default:
             throw ValidationError("Unknown mode: \(mode)")
         }

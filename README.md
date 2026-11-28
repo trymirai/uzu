@@ -241,7 +241,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ## Examples
 
-You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
+You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls** | **vision**\>:
 
 ### Chat
 
@@ -1400,6 +1400,211 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
+    console.error(error);
+});
+```
+
+</details>
+
+
+### Vision
+
+This example shows how to ask a model about images:
+
+<details>
+<summary>Rust</summary>
+
+```rust
+use std::{io, io::Write};
+
+use shoji::types::{
+    basic::ReasoningEffort,
+    session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig},
+};
+use uzu::engine::{Engine, EngineConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = Engine::new(EngineConfig::default()).await?;
+    let model = engine.model("trymirai/Qwen3.5-9B-M-Vision".to_string()).await?.ok_or("Model not found")?;
+    let downloader = engine.download(&model).await?;
+    while let Some(update) = downloader.next().await {
+        print!("\r\u{001B}[2KDownload progress: {:.2}%", update.progress() * 100.0);
+        io::stdout().flush()?;
+    }
+    println!();
+
+    let session = engine.chat(model, ChatConfig::default()).await?;
+    let messages = vec![
+        ChatMessage::system()
+            .with_text("You are a helpful assistant".to_string())
+            .with_reasoning_effort(ReasoningEffort::Disabled),
+        ChatMessage::user()
+            .with_block(ChatContentBlock::Image {
+                url: "https://assets.trymirai.com/images/artifacts/photo-cat.jpeg".to_string(),
+            })
+            .with_block(ChatContentBlock::Image {
+                url: "https://assets.trymirai.com/images/artifacts/photo-london.jpeg".to_string(),
+            })
+            .with_text("What's on the images?".to_string()),
+    ];
+    let replies = session
+        .reply(
+            messages,
+            ChatReplyConfig {
+                token_limit: Some(256),
+                ..Default::default()
+            },
+        )
+        .await?;
+    if let Some(reply) = replies.last() {
+        println!("Reasoning: {}", reply.message.reasoning().unwrap_or_default());
+        println!("Text: {}", reply.message.text().unwrap_or_default());
+    }
+
+    Ok(())
+}
+```
+
+</details>
+
+<details>
+<summary>Python</summary>
+
+```python
+import asyncio
+
+from uzu import (
+    ChatConfig,
+    ChatContentBlock,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    ReasoningEffort,
+)
+
+
+async def main() -> None:
+    engine_config = EngineConfig.create()
+    engine = await Engine.create(engine_config)
+
+    model = await engine.model("trymirai/Qwen3.5-9B-M-Vision")
+    if model is None:
+        raise RuntimeError("Model not found")
+    async for update in (await engine.download(model)).iterator():
+        print(f"\rDownload progress: {update.progress:.2%}", end="", flush=True)
+    print()
+
+    session = await engine.chat(model, ChatConfig.create())
+    messages = [
+        ChatMessage.system().with_text("You are a helpful assistant").with_reasoning_effort(ReasoningEffort.Disabled),
+        ChatMessage.user()
+        .with_block(ChatContentBlock.Image(url="https://assets.trymirai.com/images/artifacts/photo-cat.jpeg"))
+        .with_block(ChatContentBlock.Image(url="https://assets.trymirai.com/images/artifacts/photo-london.jpeg"))
+        .with_text("What's on the images?"),
+    ]
+    replies = await session.reply(messages, ChatReplyConfig.create().with_token_limit(256))
+    if replies:
+        message = replies[-1].message
+        print(f"Reasoning: {message.reasoning or ''}")
+        print(f"Text: {message.text or ''}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+</details>
+
+<details>
+<summary>Swift</summary>
+
+```swift
+import Foundation
+import Uzu
+
+public func runVision() async throws {
+    let engineConfig = EngineConfig.create()
+    let engine = try await Engine.create(config: engineConfig)
+
+    guard let model = try await engine.model(identifier: "trymirai/Qwen3.5-9B-M-Vision") else {
+        return
+    }
+    for try await update in try await engine.download(model: model).iterator() {
+        print(String(format: "\r\u{001B}[2KDownload progress: %.2f%%", update.progress() * 100), terminator: "")
+        fflush(stdout)
+    }
+    print()
+
+    let session = try await engine.chat(model: model, config: .create())
+    let messages = [
+        ChatMessage.system()
+            .withText(text: "You are a helpful assistant")
+            .withReasoningEffort(reasoningEffort: .disabled),
+        ChatMessage.user()
+            .withBlock(block: .image(url: "https://assets.trymirai.com/images/artifacts/photo-cat.jpeg"))
+            .withBlock(block: .image(url: "https://assets.trymirai.com/images/artifacts/photo-london.jpeg"))
+            .withText(text: "What's on the images?")
+    ]
+    let replies = try await session.reply(input: messages, config: ChatReplyConfig.create().withTokenLimit(tokenLimit: 256))
+    guard let message = replies.last?.message else {
+        return
+    }
+
+    print("Reasoning: \(message.reasoning() ?? "")")
+    print("Text: \(message.text() ?? "")")
+}
+```
+
+</details>
+
+<details>
+<summary>TypeScript</summary>
+
+```ts
+import {
+    ChatConfig,
+    ChatContentBlockImage,
+    ChatMessage,
+    ChatReplyConfig,
+    Engine,
+    EngineConfig,
+    ReasoningEffort
+} from '@trymirai/uzu';
+
+async function main() {
+    let engineConfig = EngineConfig.create();
+    let engine = await Engine.create(engineConfig);
+
+    let model = await engine.model('trymirai/Qwen3.5-9B-M-Vision');
+    if (!model) {
+        throw new Error('Model not found');
+    }
+    for await (const update of await engine.download(model)) {
+        process.stdout.write(`\rDownload progress: ${(update.progress * 100).toFixed(2)}%`);
+    }
+    console.log();
+
+    let session = await engine.chat(model, ChatConfig.create());
+    let messages = [
+        ChatMessage.system()
+            .withText('You are a helpful assistant')
+            .withReasoningEffort("Disabled" as ReasoningEffort),
+        ChatMessage.user()
+            .withBlock(new ChatContentBlockImage('https://assets.trymirai.com/images/artifacts/photo-cat.jpeg'))
+            .withBlock(new ChatContentBlockImage('https://assets.trymirai.com/images/artifacts/photo-london.jpeg'))
+            .withText("What's on the images?")
+    ];
+    let replies = await session.reply(messages, ChatReplyConfig.create().withTokenLimit(256));
+    let message = replies[replies.length - 1]?.message;
+    if (message) {
+        console.log('Reasoning: ', message.reasoning ?? '');
+        console.log('Text: ', message.text ?? '');
+    }
+}
+
+main().catch((error) => {
     console.error(error);
 });
 ```

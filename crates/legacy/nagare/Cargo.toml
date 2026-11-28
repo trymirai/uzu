@@ -53,6 +53,7 @@ bindings-types = { workspace = true, optional = true }
 bon.workspace = true
 kiban.workspace = true
 bindings.workspace = true
+blake3.workspace = true
 nagare-macros.workspace = true
 shoji.workspace = true
 hanashi.workspace = true

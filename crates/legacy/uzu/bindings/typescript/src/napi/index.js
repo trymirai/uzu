@@ -611,6 +611,7 @@ module.exports.ModelSpecializationDecision = nativeBinding.ModelSpecializationDe
 module.exports.ModelSpecializationSpeculation = nativeBinding.ModelSpecializationSpeculation
 module.exports.ModelSpecializationTextToSpeech = nativeBinding.ModelSpecializationTextToSpeech
 module.exports.ModelSpecializationTranslation = nativeBinding.ModelSpecializationTranslation
+module.exports.ModelSpecializationVision = nativeBinding.ModelSpecializationVision
 module.exports.ModelVendor = nativeBinding.ModelVendor
 module.exports.PcmBatch = nativeBinding.PcmBatch
 module.exports.ReplyEnergyComponents = nativeBinding.ReplyEnergyComponents

@@ -2392,6 +2392,14 @@ public func isTranslationCapable() -> Bool  {
 })
 }
     
+public func isVisionCapable() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_shoji_fn_method_model_is_vision_capable(
+            FfiConverterTypeModel_lower(self),$0
+    )
+})
+}
+    
 public func name() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_shoji_fn_method_model_name(
@@ -5088,6 +5096,7 @@ public enum ModelSpecialization: Equatable, Hashable, Codable {
     case textToSpeech
     case translation
     case speculation
+    case vision
 
 
 
@@ -5121,6 +5130,8 @@ public struct FfiConverterTypeModelSpecialization: FfiConverterRustBuffer {
         
         case 6: return .speculation
         
+        case 7: return .vision
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -5151,6 +5162,10 @@ public struct FfiConverterTypeModelSpecialization: FfiConverterRustBuffer {
         
         case .speculation:
             writeInt(&buf, Int32(6))
+        
+        
+        case .vision:
+            writeInt(&buf, Int32(7))
         
         }
     }

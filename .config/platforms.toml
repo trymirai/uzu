@@ -172,3 +172,4 @@ chat-cloud = { title = "Chat with the cloud model", description = "In this examp
 chat-shared-instance = { title = "Chat with shared instance", description = "This example shows how to reuse chat instance without reloading model into memory:" }
 chat-structured-output = { title = "Chat with structured output", description = "Sometimes you want the generated output to be valid JSON with predefined fields. You can use `Grammar` to manually specify a JSON schema for the response you want to receive:" }
 tool-calls = { title = "Tool calls", description = "This example shows how to use external tools:" }
+vision = { title = "Vision", description = "This example shows how to ask a model about images:" }

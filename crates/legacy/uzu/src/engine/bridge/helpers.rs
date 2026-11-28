@@ -2,10 +2,16 @@ use std::pin::Pin;
 
 use futures::{Stream, stream};
 use shoji::{
-    traits::backend::{Error as ShojiBackendError, chat_token::StreamOutput as ChatTokenStreamOutput},
-    types::basic::{
-        BackendError, ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
-        SamplingPolicy as ShojiSamplingPolicy,
+    traits::backend::{
+        Error as ShojiBackendError,
+        chat_token::{StreamImage, StreamOutput as ChatTokenStreamOutput},
+    },
+    types::{
+        basic::{
+            BackendError, ContextLength, Grammar as ShojiGrammar, SamplingMethod as ShojiSamplingMethod,
+            SamplingPolicy as ShojiSamplingPolicy,
+        },
+        session::vision::VisionImage,
     },
 };
 use tokenizers::Tokenizer;
@@ -18,10 +24,34 @@ use uzu_engine::{
     },
 };
 
+use crate::vision;
+
 pub fn error_to_stream_output<'a>(
     error: BackendError
 ) -> Pin<Box<dyn Stream<Item = Result<ChatTokenStreamOutput, ShojiBackendError>> + Send + 'a>> {
     Box::pin(stream::once(async move { Err::<ChatTokenStreamOutput, ShojiBackendError>(error.into()) }))
+}
+
+pub fn scale_images<B: Backend>(
+    model: &LanguageModel<B>,
+    images: &[StreamImage],
+) -> Result<Vec<VisionImage>, BackendError> {
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let config = model.vision_config().ok_or_else(|| BackendError::other("Model has no vision encoder"))?;
+    let factor = config.encoder_config.patch_size * config.encoder_config.spatial_merge_size;
+    let min_pixels = config.preprocessing_config.min_pixels;
+    let max_pixels = config.preprocessing_config.max_pixels;
+    images
+        .iter()
+        .map(|image| {
+            let scaled = vision::scale(&image.bytes, factor, min_pixels, max_pixels)
+                .map_err(|err| BackendError::other(format!("{}: {err}", image.url)))?;
+            Ok(scaled)
+        })
+        .collect()
 }
 
 pub fn stream_error_to_backend_error<B: Backend>(error: LanguageModelStreamError<B>) -> BackendError {

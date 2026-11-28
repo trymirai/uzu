@@ -38,7 +38,8 @@ use crate::engine::bridge::{
     chat_token_state::UzuChatTokenBackendInstanceState,
     helpers::{
         error_to_stream_output, get_grammar, get_max_context_length, get_sampling_method,
-        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, stream_error_to_backend_error,
+        grammar_trigger_token_sequence, grammar_trigger_token_sequence_for_prompt, scale_images,
+        stream_error_to_backend_error,
     },
 };
 
@@ -48,6 +49,7 @@ pub struct UzuChatTokenBackendInstance<B: Backend> {
     model: Arc<LanguageModel<B>>,
     config: ChatConfig,
     stop_token_ids: Vec<i32>,
+    image_pad_token_id: Option<u64>,
     max_context_length: Option<u32>,
     sampling_defaults: SamplingParameters,
 }
@@ -78,6 +80,7 @@ impl<B: Backend> UzuChatTokenBackendInstance<B> {
             model: Arc::new(model),
             config,
             stop_token_ids,
+            image_pad_token_id: None,
             max_context_length,
             sampling_defaults,
         })
@@ -131,7 +134,7 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
                 grammar_trigger_token_sequence(grammar_trigger.as_deref(), self.model.tokenizer());
             let trigger_token_sequence = grammar_trigger_token_sequence_for_prompt(
                 trigger_token_sequence.as_deref(),
-                input,
+                &input.tokens,
                 self.model.tokenizer(),
             );
             match get_grammar(grammar_config, self.model.tokenizer(), &self.stop_token_ids, trigger_token_sequence) {
@@ -165,7 +168,27 @@ impl<B: Backend> BackendInstance for UzuChatTokenBackendInstance<B> {
         options.sampling_method = sampling_method;
         options.grammar = grammar;
 
-        let stream = match self.model.stream(&[LanguageModelInput::Tokens(input)], model_state, options) {
+        let mut model_input = Vec::<LanguageModelInput>::new();
+        let images = match scale_images(&self.model, &input.images) {
+            Ok(images) => images,
+            Err(err) => return Box::pin(NoMetricsStream::new(error_to_stream_output(err))),
+        };
+        if images.is_empty() {
+            model_input.push(LanguageModelInput::Tokens(&input.tokens));
+        } else {
+            let mut chunks = input.tokens.split(|&token| Some(token) == self.image_pad_token_id);
+            for image in &images {
+                if let Some(tokens) = chunks.next().filter(|tokens| !tokens.is_empty()) {
+                    model_input.push(LanguageModelInput::Tokens(tokens));
+                }
+                model_input.push(LanguageModelInput::Image(image));
+            }
+            if let Some(tokens) = chunks.next().filter(|tokens| !tokens.is_empty()) {
+                model_input.push(LanguageModelInput::Tokens(tokens));
+            }
+        }
+
+        let stream = match self.model.stream(&model_input, model_state, options) {
             Ok(stream) => stream,
             Err(err) => {
                 return Box::pin(NoMetricsStream::new(error_to_stream_output(stream_error_to_backend_error(err))));
@@ -230,6 +253,16 @@ impl<B: Backend> ChatTokenBackendInstance for UzuChatTokenBackendInstance<B> {
             config,
             ..self.clone()
         })
+    }
+
+    fn with_image_pad_token_id(
+        &self,
+        image_pad_token_id: u64,
+    ) -> Result<Box<dyn ChatTokenBackendInstance>, ShojiBackendError> {
+        Ok(Box::new(Self {
+            image_pad_token_id: Some(image_pad_token_id),
+            ..self.clone()
+        }))
     }
 
     fn tokenizer(&self) -> Arc<Tokenizer> {
