@@ -28,7 +28,7 @@ unsafe fn raw_msg_send<R>(
 // Registers a selector by name at runtime, so the obfuscated private selector
 // names are only ever materialized at runtime — never appearing verbatim in the
 // binary the way a compile-time `sel!(...)` would.
-fn register_selector(name: &str) -> Sel {
+pub fn register_selector(name: &str) -> Sel {
     Sel::register(&CString::new(name).expect("selector name has no interior NUL byte"))
 }
 

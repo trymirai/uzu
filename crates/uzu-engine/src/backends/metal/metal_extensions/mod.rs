@@ -1,9 +1,11 @@
+mod compute_command_encoder_extensions;
 mod data_type;
 mod device_extensions;
 mod function_constant_values_extensions_set_value;
 mod library_extensions_pipeline;
 mod sparse_page_size_extensions;
 
+pub use compute_command_encoder_extensions::{ComputeCommandEncoderExt, PredicateComparison};
 pub use data_type::MetalDataTypeExt;
 pub use device_extensions::DeviceExt;
 pub use function_constant_values_extensions_set_value::FunctionConstantValuesSetValue;
