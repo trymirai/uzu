@@ -10,7 +10,7 @@ use metal::{
     MTL4ArgumentTable, MTL4ArgumentTableDescriptor, MTL4CommandAllocator, MTL4CommandBuffer, MTL4CommandBufferExt,
     MTL4CommandEncoder, MTL4CommandEncoderExt, MTL4CommandQueue, MTL4CommandQueueExt, MTL4CommitFeedback,
     MTL4CommitFeedbackExt, MTL4CommitFeedbackHandler, MTL4CommitOptions, MTL4ComputeCommandEncoder,
-    MTL4VisibilityOptions, MTLDeviceExt, MTLStages,
+    MTL4VisibilityOptions, MTLBuffer, MTLDeviceExt, MTLStages,
 };
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use rangemap::RangeSet;
@@ -26,6 +26,7 @@ use crate::backends::{
         context::MetalContext,
         error::MetalError,
         kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
+        metal_extensions::{ComputeCommandEncoderExt, PredicateComparison},
         timestamp_recorder::MetalTimestampRecorder,
     },
 };
@@ -124,13 +125,7 @@ impl MetalCommandBufferEncoding {
         if accesses.iter().any(|access| {
             self.writes.overlaps(&access.range.into()) || (access.write && self.reads.overlaps(&access.range.into()))
         }) {
-            self.compute_encoder.barrier_after_encoder_stages_before_encoder_stages_visibility_options(
-                MTLStages::Dispatch,
-                MTLStages::Dispatch,
-                MTL4VisibilityOptions::Device,
-            );
-            self.reads.clear();
-            self.writes.clear();
+            self.barrier();
         }
 
         for access in accesses {
@@ -139,6 +134,113 @@ impl MetalCommandBufferEncoding {
             } else {
                 self.reads.insert(access.range.into());
             }
+        }
+    }
+
+    fn barrier(&mut self) {
+        self.compute_encoder.barrier_after_encoder_stages_before_encoder_stages_visibility_options(
+            MTLStages::Dispatch,
+            MTLStages::Dispatch,
+            MTL4VisibilityOptions::Device,
+        );
+        self.reads.clear();
+        self.writes.clear();
+    }
+
+    pub fn encode_if(
+        &mut self,
+        condition: &MetalCondition,
+        then: impl FnOnce(&mut Self),
+    ) {
+        self.barrier();
+        self.compute_encoder.encode_start_if(
+            &condition.predicate,
+            condition.offset,
+            condition.comparison,
+            condition.reference,
+        );
+        then(self);
+        self.barrier();
+        assert!(self.compute_encoder.encode_end_if());
+    }
+
+    pub fn encode_if_else(
+        &mut self,
+        condition: &MetalCondition,
+        then: impl FnOnce(&mut Self),
+        otherwise: impl FnOnce(&mut Self),
+    ) {
+        self.barrier();
+        self.compute_encoder.encode_start_if(
+            &condition.predicate,
+            condition.offset,
+            condition.comparison,
+            condition.reference,
+        );
+        then(self);
+        self.barrier();
+        self.compute_encoder.encode_start_else();
+        otherwise(self);
+        self.barrier();
+        assert!(self.compute_encoder.encode_end_if());
+    }
+
+    pub fn encode_while(
+        &mut self,
+        condition: &MetalCondition,
+        body: impl FnOnce(&mut Self),
+    ) {
+        self.barrier();
+        self.compute_encoder.encode_start_while(
+            &condition.predicate,
+            condition.offset,
+            condition.comparison,
+            condition.reference,
+        );
+        body(self);
+        self.barrier();
+        assert!(self.compute_encoder.encode_end_while());
+    }
+
+    pub fn encode_do_while(
+        &mut self,
+        condition: &MetalCondition,
+        body: impl FnOnce(&mut Self),
+    ) {
+        self.barrier();
+        self.compute_encoder.encode_start_do_while();
+        body(self);
+        self.barrier();
+        assert!(self.compute_encoder.encode_end_do_while(
+            &condition.predicate,
+            condition.offset,
+            condition.comparison,
+            condition.reference,
+        ));
+    }
+}
+
+pub struct MetalCondition {
+    predicate: Retained<ProtocolObject<dyn MTLBuffer>>,
+    offset: usize,
+    comparison: PredicateComparison,
+    reference: u32,
+}
+
+impl MetalCondition {
+    pub fn new(
+        predicate: impl BufferRef<Backend = Metal>,
+        comparison: PredicateComparison,
+        reference: u32,
+    ) -> Self {
+        let (buffer, range) = predicate.parts();
+        assert_eq!(range.end - range.start, size_of::<u32>());
+        let (predicate, offset) = buffer.downcast();
+        Self {
+            predicate: predicate.clone(),
+            offset: offset + range.start,
+            comparison,
+            reference,
         }
     }
 }
@@ -394,3 +496,7 @@ impl CommandBufferCompleted for MetalCommandBufferCompleted {
         &self.timestamps
     }
 }
+
+#[cfg(test)]
+#[path = "../../../unit/backends/metal/command_buffer_test.rs"]
+mod tests;
