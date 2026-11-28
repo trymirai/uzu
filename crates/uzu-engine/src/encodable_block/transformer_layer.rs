@@ -79,7 +79,6 @@ struct Sublayer<B: Backend> {
 }
 
 pub struct TransformerLayer<B: Backend> {
-    pub layer_index: u32,
     pub kv_source_layer_index: Option<u32>,
     prologue: Box<[StreamOp<B>]>,
     pub mixer: Box<dyn Mixer<B>>,
@@ -425,7 +424,6 @@ impl<B: Backend> TransformerLayer<B> {
         .await?;
 
         Ok(Self {
-            layer_index,
             kv_source_layer_index: layer_config.kv_source_layer_index,
             prologue,
             mixer,
@@ -444,7 +442,6 @@ impl<B: Backend> TransformerLayer<B> {
         state: Option<MaybeMut<dyn MixerState<B>>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, TransformerLayerError<B>> {
-        let command_buffer = &mut *command_buffer.debug_group(&format!("transformer layer {}", self.layer_index));
         let row_count = batch_dim.size();
         let op_context = StreamOpContext {
             batch_dim,

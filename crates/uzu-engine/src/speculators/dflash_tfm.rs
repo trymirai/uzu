@@ -1,4 +1,10 @@
-use std::{collections::HashMap, io, mem::size_of, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    io,
+    mem::size_of,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use derive_more::Debug;
 use serde::{Deserialize, Serialize};
@@ -117,16 +123,27 @@ pub struct DFlashTfmSpeculator<B: Backend> {
     sampling: Sampling<B>,
     linearize_chain: [<B::Kernels as Kernels>::LinearizeChainKernel; 2],
     linearize_tree: [<B::Kernels as Kernels>::LinearizeTreeKernel; 2],
+    shape: DFlashTfmTreeShape,
+}
+
+pub struct ResolvedDFlashTfmSpeculator {
+    model_path: PathBuf,
     config: DFlashSpeculatorConfig,
     shape: DFlashTfmTreeShape,
 }
 
+impl ResolvedDFlashTfmSpeculator {
+    pub fn hidden_feature_indices(&self) -> &[u32] {
+        &self.config.draft_config.target_layer_ids
+    }
+}
+
 impl<B: Backend> DFlashTfmSpeculator<B> {
-    pub async fn new(
+    /// Loads the kind of speculator but not the weights (see [`Self::load`])
+    pub async fn resolve(
         model_path: &Path,
-        target_embedding: &Embedding<B>,
-        context: Arc<B::Context>,
-    ) -> Result<Option<Self>, DFlashSpeculatorLoadError<B>> {
+        context: &B::Context,
+    ) -> Result<Option<ResolvedDFlashTfmSpeculator>, DFlashSpeculatorLoadError<B>> {
         let mut shapes: HashMap<String, DFlashTfmTreeShape> =
             serde_json::from_slice(&file::read(model_path.join("shapes.json")).await?)?;
 
@@ -138,12 +155,31 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             return Ok(None);
         };
 
-        let data_type = DataType::BF16;
-
         let config = match serde_json::from_slice(&file::read(model_path.join("config.json")).await?)? {
             AnySpeculatorConfig::DFlashSpeculatorConfig(config) => config,
             AnySpeculatorConfig::DFlareSpeculatorConfig(_) => todo!("DFlare speculator"),
         };
+
+        Ok(Some(ResolvedDFlashTfmSpeculator {
+            model_path: model_path.to_path_buf(),
+            config,
+            shape,
+        }))
+    }
+
+    pub async fn load(
+        resolved: ResolvedDFlashTfmSpeculator,
+        target_embedding: &Embedding<B>,
+        context: Arc<B::Context>,
+    ) -> Result<Self, DFlashSpeculatorLoadError<B>> {
+        let ResolvedDFlashTfmSpeculator {
+            model_path,
+            config,
+            shape,
+        } = resolved;
+
+        let data_type = DataType::BF16;
+
         let draft_vocab_size = config.draft_config.vocab_size;
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*context).await?;
@@ -202,7 +238,7 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
                 .map_err(DFlashSpeculatorLoadError::Backend)?,
         ];
 
-        Ok(Some(Self {
+        Ok(Self {
             context,
             dflash,
             weaver,
@@ -210,13 +246,8 @@ impl<B: Backend> DFlashTfmSpeculator<B> {
             sampling,
             linearize_chain,
             linearize_tree,
-            config,
             shape,
-        }))
-    }
-
-    pub fn hidden_feature_layer_indices(&self) -> &[u32] {
-        &self.config.draft_config.target_layer_ids
+        })
     }
 
     pub fn empty_state(

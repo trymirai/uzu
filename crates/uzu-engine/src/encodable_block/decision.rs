@@ -64,6 +64,7 @@ impl<B: Backend> Decision<B> {
             output_data_type,
             None,
             &config.decoder_config.transformer_config,
+            None,
             &parameter_tree.subtree("transformer"),
             context,
         )
@@ -123,7 +124,6 @@ impl<B: Backend> Decision<B> {
                 None::<&B::ScratchBuffer>,
                 &batch_topology,
                 Some((token_count - 1..token_count).into()),
-                None,
                 None,
                 command_buffer,
             )?

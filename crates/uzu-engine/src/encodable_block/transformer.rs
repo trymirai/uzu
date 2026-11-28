@@ -1,4 +1,4 @@
-use std::{range::Range, sync::Arc};
+use std::{cmp::Reverse, range::Range, sync::Arc};
 
 use derive_more::Debug;
 use thiserror::Error;
@@ -19,19 +19,234 @@ use crate::{
     utils::maybe_mut::MaybeMut,
 };
 
-enum TransformerLayerStateType<B: Backend> {
-    Owned(Box<dyn MixerState<B>>),
-    Shared(u32),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct LayerId(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StateId(u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CacheStep {
+    layer: LayerId,
+    state: StepState,
+    loop_action: Option<LoopAction>,
+    captures_hidden: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopAction {
+    /// A step will restart into this step.
+    Start,
+    Restart,
+}
+
+/// A step that does *not* write anything into cache
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReadoutStep {
+    layer: LayerId,
+    state: StateId,
+    captures_hidden: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StepState {
+    Owned(StateId),
+    Shared(StateId),
+}
+
+#[derive(Debug, Clone)]
+struct LayerSchedule {
+    cache_steps: Box<[CacheStep]>,
+    readout_steps: Box<[ReadoutStep]>,
+    owned_cache_count: u32,
+    hidden_capture_count: u32,
+    /// whether any of the readout steps have hidden layers that need to be captured
+    has_readout_hiddens: bool,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ScheduleError {
+    #[error("Transformer has no steps to run")]
+    NoSteps,
+    #[error("Hidden layer capture {0} is out of order")]
+    HiddenIndicesOutOfOrder(u32),
+    #[error("Layer {0}'s state points to layer {1}, which does not own state")]
+    SharedNotIntoOwned(u32, u32),
+    #[error("Layer {0} has a shared KV cache, which is incompatible with looping architectures")]
+    LoopingAndSharedKVCache(u32),
+    #[error("Tried to reference layer index {index} out of {len} layers")]
+    LayerIndexOutOfBounds {
+        index: u32,
+        len: usize,
+    },
+    #[error("Looped layer indices skip layer {0}")]
+    SkippedLayerIndex(u32),
+}
+
+impl LayerSchedule {
+    /// `kv_sources[layer]` is that layer's `kv_source_layer_index`.
+    fn new(
+        kv_sources: &[Option<u32>],
+        layer_order: Option<&[u32]>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+    ) -> Result<Self, ScheduleError> {
+        if layer_order.map_or(kv_sources.is_empty(), <[u32]>::is_empty) {
+            return Err(ScheduleError::NoSteps);
+        }
+
+        let mut cache_steps = Vec::with_capacity(layer_order.map_or(kv_sources.len(), <[u32]>::len));
+        let mut hidden_capture_count = 0;
+
+        let mut hidden_targets = hidden_feature_layer_indices.into_iter().flatten();
+        let mut hidden_target = hidden_targets.next();
+        let mut captures_hidden = |step_index: usize| {
+            if hidden_target != Some(&(step_index as u32)) {
+                return false;
+            }
+
+            hidden_capture_count += 1;
+            hidden_target = hidden_targets.next();
+
+            true
+        };
+
+        let owned_cache_count = if let Some(indices) = layer_order {
+            for (i, &layer_index) in indices.iter().enumerate() {
+                let kv_source = kv_sources.get(layer_index as usize).ok_or(ScheduleError::LayerIndexOutOfBounds {
+                    index: layer_index,
+                    len: kv_sources.len(),
+                })?;
+
+                if kv_source.is_some() {
+                    return Err(ScheduleError::LoopingAndSharedKVCache(layer_index));
+                }
+
+                let step = CacheStep {
+                    layer: LayerId(layer_index),
+                    state: StepState::Owned(StateId(i as u32)),
+                    loop_action: None,
+                    captures_hidden: captures_hidden(i),
+                };
+
+                cache_steps.push(step);
+            }
+
+            indices.len() as u32
+        } else {
+            let mut state_index = 0;
+            let mut layer_to_state_id = vec![None; kv_sources.len()];
+            for (layer_index, &kv_source) in kv_sources.iter().enumerate() {
+                let step = CacheStep {
+                    layer: LayerId(layer_index as u32),
+                    state: match kv_source {
+                        Some(source_layer_index) => StepState::Shared(StateId(
+                            layer_to_state_id
+                                .get(source_layer_index as usize)
+                                .ok_or(ScheduleError::LayerIndexOutOfBounds {
+                                    index: source_layer_index,
+                                    len: kv_sources.len(),
+                                })?
+                                .ok_or(ScheduleError::SharedNotIntoOwned(layer_index as u32, source_layer_index))?,
+                        )),
+                        None => {
+                            let id = StateId(state_index);
+                            debug_assert!(layer_to_state_id[layer_index].is_none());
+                            layer_to_state_id[layer_index] = Some(state_index);
+                            state_index += 1;
+                            StepState::Owned(id)
+                        },
+                    },
+                    loop_action: None,
+                    captures_hidden: captures_hidden(layer_index),
+                };
+
+                cache_steps.push(step);
+            }
+
+            state_index
+        };
+
+        if let Some(target) = hidden_target {
+            return Err(ScheduleError::HiddenIndicesOutOfOrder(*target));
+        }
+
+        // No need to check for looping and other invariants unless we have custom order
+        if layer_order.is_some() {
+            let mut max_so_far = cache_steps[0].layer;
+            if max_so_far != LayerId(0) {
+                return Err(ScheduleError::SkippedLayerIndex(0));
+            }
+            let mut starts = Vec::new();
+            for step in 1..cache_steps.len() {
+                let ([.., prev], [next, ..]) = cache_steps.split_at_mut(step) else {
+                    unreachable!()
+                };
+
+                if next.layer > max_so_far {
+                    if next.layer.0 != max_so_far.0 + 1 {
+                        return Err(ScheduleError::SkippedLayerIndex(max_so_far.0 + 1));
+                    }
+                    max_so_far = next.layer;
+                }
+
+                if next.layer <= prev.layer {
+                    next.loop_action = Some(LoopAction::Restart);
+                    starts.push(next.layer);
+                }
+            }
+
+            if max_so_far.0 != kv_sources.len() as u32 - 1 {
+                return Err(ScheduleError::SkippedLayerIndex(max_so_far.0 + 1));
+            }
+
+            starts.sort_unstable_by_key(|&x| Reverse(x));
+            starts.dedup();
+            let mut steps = cache_steps.iter_mut();
+            while let Some(start_target) = starts.pop() {
+                loop {
+                    let step = steps.next().unwrap();
+                    if step.layer == start_target {
+                        step.loop_action = Some(LoopAction::Start);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let last_stateful = cache_steps.iter().rposition(|step| matches!(step.state, StepState::Owned(_))).unwrap();
+        let readout_steps = cache_steps
+            .split_off(last_stateful + 1)
+            .into_iter()
+            .map(|step| ReadoutStep {
+                layer: step.layer,
+                state: match step.state {
+                    StepState::Shared(id) => id,
+                    StepState::Owned(_) => unreachable!(),
+                },
+                captures_hidden: step.captures_hidden,
+            })
+            .collect::<Box<[_]>>();
+
+        let has_readout_hiddens = readout_steps.iter().any(|step| step.captures_hidden);
+
+        Ok(LayerSchedule {
+            cache_steps: cache_steps.into_boxed_slice(),
+            readout_steps,
+            owned_cache_count,
+            hidden_capture_count,
+            has_readout_hiddens,
+        })
+    }
 }
 
 pub struct TransformerState<B: Backend> {
-    layer_states: Box<[TransformerLayerStateType<B>]>,
+    /// Each referenced by one [`StateId`].
+    states: Box<[Box<dyn MixerState<B>>]>,
     context_length: u32,
 }
 
 pub struct TransformerEncodeOutput<B: Backend> {
     pub output: Option<B::ScratchBuffer>,
-    pub hidden_features: Option<Box<[B::ScratchBuffer]>>,
+    pub hidden_features: Box<[B::ScratchBuffer]>,
 }
 
 impl<B: Backend> TransformerState<B> {
@@ -44,12 +259,8 @@ impl<B: Backend> TransformerState<B> {
         context_length: u32,
         suffix_length: u32,
     ) -> Result<(), B::Error> {
-        for layer_state in &mut self.layer_states {
-            let TransformerLayerStateType::Owned(layer_state) = layer_state else {
-                continue;
-            };
-
-            layer_state.prepare(context_length, suffix_length)?;
+        for state in &mut self.states {
+            state.prepare(context_length, suffix_length)?;
         }
 
         Ok(())
@@ -64,12 +275,8 @@ impl<B: Backend> TransformerState<B> {
         {
             let command_buffer = &mut *command_buffer.debug_group("transformer accept");
 
-            for layer_state in &mut self.layer_states {
-                let TransformerLayerStateType::Owned(layer_state) = layer_state else {
-                    continue;
-                };
-
-                layer_state.encode_accept(batch_dim, accepted_indices, command_buffer)?;
+            for state in &mut self.states {
+                state.encode_accept(batch_dim, accepted_indices, command_buffer)?;
             }
 
             self.context_length += accepted_indices.len() as u32;
@@ -93,6 +300,10 @@ pub enum TransformerNewError<B: Backend> {
     Residual(#[from] ResidualNewError<B>),
     #[error("Readout expects RHT-rotated input but there is no output norm to apply it")]
     UnappliedReadoutRht,
+    #[error("Hidden features require an additive residual")]
+    HiddenFeaturesRequireAdditiveResidual,
+    #[error("Layer schedule error: {0}")]
+    Schedule(#[from] ScheduleError),
 }
 
 #[derive(Debug, Error)]
@@ -103,12 +314,12 @@ pub enum TransformerEncodeError<B: Backend> {
     Layer(#[from] TransformerLayerError<B>),
     #[error("Residual encoding error: {0}")]
     Residual(#[from] ResidualEncodeError<B>),
-    #[error("Hidden features require an additive residual")]
-    HiddenFeaturesRequireAdditiveResidual,
 }
 
 pub struct Transformer<B: Backend> {
+    /// each referenced by one [`LayerId`].
     layers: Box<[TransformerLayer<B>]>,
+    schedule: LayerSchedule,
     output_norm: Option<Normalization<B>>,
     model_dim: u32,
     residual_head: ResidualHead<B>,
@@ -120,12 +331,10 @@ impl<B: Backend> Transformer<B> {
         output_data_type: DataType,
         output_norm_hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
         transformer_config: &TransformerConfig,
+        hidden_feature_layer_indices: Option<&[u32]>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
-        if transformer_config.layer_order.is_some() {
-            todo!("custom layer order");
-        }
         let residual_config = transformer_config.residual_config.clone();
         let residual_head = ResidualHead::new(
             &residual_config,
@@ -175,8 +384,17 @@ impl<B: Backend> Transformer<B> {
             (None, None) => None,
         };
 
+        if hidden_feature_layer_indices.is_some() && !matches!(residual_head, ResidualHead::Additive) {
+            return Err(TransformerNewError::HiddenFeaturesRequireAdditiveResidual);
+        }
+
+        let kv_sources = layers.iter().map(|layer| layer.kv_source_layer_index).collect::<Box<[_]>>();
+        let schedule =
+            LayerSchedule::new(&kv_sources, transformer_config.layer_order.as_deref(), hidden_feature_layer_indices)?;
+
         Ok(Self {
             layers: layers.into_boxed_slice(),
+            schedule,
             output_norm,
             model_dim: transformer_config.model_dim,
             residual_head,
@@ -197,32 +415,27 @@ impl<B: Backend> Transformer<B> {
         self.model_dim
     }
 
+    fn layer(
+        &self,
+        id: LayerId,
+    ) -> &TransformerLayer<B> {
+        &self.layers[id.0 as usize]
+    }
+
     pub fn speculation_supported(&self) -> bool {
         matches!(self.residual_head, ResidualHead::Additive)
             && self.layers.iter().all(|layer| layer.mixer.speculation_supported())
     }
 
     pub fn max_context_length(&self) -> Option<u32> {
-        self.layers.iter().map(|layer| layer.mixer.max_context_length()).fold(None, |acc, el| match (acc, el) {
-            (Some(a), Some(b)) => Some(u32::min(a, b)),
-            (Some(x), None) | (None, Some(x)) => Some(x),
-            (None, None) => None,
-        })
-    }
-
-    pub fn prefill_cache_layer_count(&self) -> usize {
-        let num_layers = self.layers.len();
-        let Some(last_owned_kv_layer_index) =
-            self.layers.iter().rposition(|layer| layer.kv_source_layer_index.is_none())
-        else {
-            return num_layers;
-        };
-
-        last_owned_kv_layer_index + 1
+        self.layers
+            .iter()
+            .map(|layer| layer.mixer.max_context_length())
+            .fold(None, |a, b| a.and_then(|a| Some(a.min(b?))).or(a).or(b))
     }
 
     pub fn prefill_cache_skips_trailing_layers(&self) -> bool {
-        self.prefill_cache_layer_count() < self.layers.len()
+        !self.schedule.readout_steps.is_empty()
     }
 
     pub fn create_empty_state(
@@ -230,22 +443,19 @@ impl<B: Backend> Transformer<B> {
         max_context_length: Option<u32>,
         context: &B::Context,
     ) -> Result<TransformerState<B>, B::Error> {
-        let layer_states = self
-            .layers
-            .iter()
-            .map(|layer| match layer.kv_source_layer_index {
-                None => {
-                    layer.mixer.create_empty_state(max_context_length, context).map(TransformerLayerStateType::Owned)
-                },
-                Some(kv_source_layer_index) => Ok(TransformerLayerStateType::Shared(kv_source_layer_index)),
-            })
-            .collect::<Result<_, B::Error>>()?;
+        let mut states = Vec::with_capacity(self.schedule.owned_cache_count as usize);
+        for step in &self.schedule.cache_steps {
+            let StepState::Owned(id) = step.state else {
+                continue;
+            };
 
-        let context_length = 0;
+            assert_eq!(id.0 as usize, states.len());
+            states.push(self.layer(step.layer).mixer.create_empty_state(max_context_length, context)?);
+        }
 
         Ok(TransformerState {
-            layer_states,
-            context_length,
+            states: states.into_boxed_slice(),
+            context_length: 0,
         })
     }
 
@@ -255,72 +465,56 @@ impl<B: Backend> Transformer<B> {
         per_layer_inputs: Option<impl BufferRef<Backend = B>>,
         batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
-        hidden_feature_layer_indices: Option<&[u32]>,
         mut state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
-        if hidden_feature_layer_indices.is_some() && !matches!(self.residual_head, ResidualHead::Additive) {
-            return Err(TransformerEncodeError::HiddenFeaturesRequireAdditiveResidual);
-        }
-
         let mut stream = self
             .residual_head
             .expand(input, batch_dim.size(), command_buffer)
             .map_err(TransformerEncodeError::Backend)?;
-        let layer_count = if output_range.is_none() && hidden_feature_layer_indices.is_none() {
-            self.prefill_cache_layer_count()
-        } else {
-            self.layers.len()
-        };
 
-        let mut hidden_features =
-            hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
+        let mut hidden_features = Vec::with_capacity(self.schedule.hidden_capture_count as usize);
 
-        for layer in self.layers.iter().take(layer_count) {
-            let layer_state = if let Some(state) = &mut state {
-                Some(match &mut state.layer_states[layer.layer_index as usize] {
-                    TransformerLayerStateType::Owned(layer_state) => MaybeMut::Mut(layer_state.as_mut()),
-                    TransformerLayerStateType::Shared(owned_layer_index) => {
-                        let TransformerLayerStateType::Owned(owned_layer) =
-                            &state.layer_states[*owned_layer_index as usize]
-                        else {
-                            panic!("shared layer doesn't point to an owned layer");
-                        };
-                        MaybeMut::Const(owned_layer.as_ref())
-                    },
-                })
-            } else {
-                None
-            };
+        for (step_index, step) in self.schedule.cache_steps.iter().enumerate() {
+            let command_buffer =
+                &mut *command_buffer.debug_group(&format!("step {step_index} (layer {})", step.layer.0));
+            // TODO: `step.loop_action` is available here to handle restarts for block attention
+            let layer_state = state.as_mut().map(|state| match step.state {
+                StepState::Owned(state_id) => MaybeMut::Mut(state.states[state_id.0 as usize].as_mut()),
+                StepState::Shared(state_id) => MaybeMut::Const(state.states[state_id.0 as usize].as_ref()),
+            });
 
+            let layer = &self.layers[step.layer.0 as usize];
             stream = layer.encode(stream, per_layer_inputs, batch_dim, layer_state, command_buffer)?;
 
-            if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
-                for (feature_index, &layer_index) in indices.iter().enumerate() {
-                    if layer_index == layer.layer_index {
-                        let feature = self
-                            .capture_hidden_feature(&stream, command_buffer)
-                            .map_err(TransformerEncodeError::Backend)?;
-                        hidden_features[feature_index] = Some(feature);
-                    }
+            if step.captures_hidden {
+                let feature =
+                    self.capture_hidden_feature(&stream, command_buffer).map_err(TransformerEncodeError::Backend)?;
+                hidden_features.push(feature);
+            }
+        }
+
+        if self.schedule.has_readout_hiddens || output_range.is_some() {
+            for (step_index, step) in self.schedule.readout_steps.iter().enumerate() {
+                let command_buffer =
+                    &mut *command_buffer.debug_group(&format!("readout step {step_index} (layer {})", step.layer.0));
+                let layer_state =
+                    state.as_ref().map(|state| MaybeMut::Const(state.states[step.state.0 as usize].as_ref()));
+
+                let layer = &self.layers[step.layer.0 as usize];
+                stream = layer.encode(stream, per_layer_inputs, batch_dim, layer_state, command_buffer)?;
+
+                if step.captures_hidden {
+                    let feature = self
+                        .capture_hidden_feature(&stream, command_buffer)
+                        .map_err(TransformerEncodeError::Backend)?;
+                    hidden_features.push(feature);
                 }
             }
         }
 
-        let hidden_features = hidden_features.map(|hidden_features| {
-            hidden_features
-                .into_iter()
-                .enumerate()
-                .map(|(feature_index, feature)| {
-                    feature.unwrap_or_else(|| {
-                        panic!(
-                            "requested hidden feature for missing layer {}",
-                            hidden_feature_layer_indices.unwrap()[feature_index]
-                        )
-                    })
-                })
-                .collect::<Box<[_]>>()
-        });
+        debug_assert_eq!(hidden_features.len(), self.schedule.hidden_capture_count as usize);
+        let hidden_features = hidden_features.into_boxed_slice();
 
         let Some(output_range) = output_range else {
             return Ok(TransformerEncodeOutput {
@@ -356,3 +550,7 @@ impl<B: Backend> Transformer<B> {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "../../unit/encodable_block/layer_schedule_test.rs"]
+mod tests;

@@ -42,7 +42,7 @@ pub struct Decoder<B: Backend> {
 
 pub struct DecoderEncodeOutput<B: Backend> {
     pub logits: Option<B::ScratchBuffer>,
-    pub hidden_features: Option<Box<[B::ScratchBuffer]>>,
+    pub hidden_features: Box<[B::ScratchBuffer]>,
     pub final_hidden: Option<B::ScratchBuffer>,
 }
 
@@ -54,6 +54,7 @@ impl<B: Backend> Decoder<B> {
     pub async fn new(
         data_type: DataType,
         config: &DecoderConfig,
+        hidden_feature_indices: Option<&[u32]>,
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, DecoderError<B>> {
@@ -110,6 +111,7 @@ impl<B: Backend> Decoder<B> {
             data_type,
             readout_input_hadamard_factors,
             &config.transformer_config,
+            hidden_feature_indices,
             &parameter_tree.subtree("transformer"),
             context,
         )
@@ -152,7 +154,6 @@ impl<B: Backend> Decoder<B> {
         token_ids: impl BufferRef<Backend = B>,
         batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
-        hidden_feature_layer_indices: Option<&[u32]>,
         state: &mut TransformerState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
@@ -178,7 +179,6 @@ impl<B: Backend> Decoder<B> {
             per_layer_inputs.as_ref(),
             batch_dim,
             output_range,
-            hidden_feature_layer_indices,
             Some(state),
             command_buffer,
         )?;
@@ -196,16 +196,11 @@ impl<B: Backend> Decoder<B> {
         } else {
             None
         };
-        let final_hidden = if hidden_feature_layer_indices.is_none() {
-            None
-        } else {
-            transformer_output.output
-        };
 
         Ok(DecoderEncodeOutput {
             logits,
             hidden_features: transformer_output.hidden_features,
-            final_hidden,
+            final_hidden: transformer_output.output,
         })
     }
 }

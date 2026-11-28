@@ -82,6 +82,10 @@ impl<B: Backend> Engine<B> {
         // TODO
         let speculator_path = model_path.join("speculator");
         let speculator_path = file::exists(&speculator_path).await.then_some(speculator_path);
+        let resolved_speculator = match speculator_path.as_deref() {
+            Some(speculator_path) => DFlashTfmSpeculator::<B>::resolve(speculator_path, &*self.context).await?,
+            None => None,
+        };
 
         let tokenizer = Arc::new(Tokenizer::from_bytes(file::read(model_path.join("tokenizer.json")).await?)?);
 
@@ -90,20 +94,22 @@ impl<B: Backend> Engine<B> {
         let decoder = Decoder::new(
             data_type,
             &config.decoder_config,
+            resolved_speculator.as_ref().map(|spec| spec.hidden_feature_indices()),
             &weight_loader.tree().subtree("decoder"),
             self.context.as_ref(),
         )
         .await?;
 
         assert!(
-            speculator_path.is_none() || decoder.speculation_supported(),
+            resolved_speculator.is_none() || decoder.speculation_supported(),
             "attempted to load speculator for a model that doesn't support one"
         );
 
-        let speculator = if let Some(speculator_path) = speculator_path.as_deref() {
-            DFlashTfmSpeculator::new(speculator_path, decoder.embedding(), self.context.clone()).await?
-        } else {
-            None
+        let speculator = match resolved_speculator {
+            Some(resolved) => {
+                Some(DFlashTfmSpeculator::load(resolved, decoder.embedding(), self.context.clone()).await?)
+            },
+            None => None,
         };
 
         let sampling = Sampling::new(config.decoder_config.vocab_size, data_type);
