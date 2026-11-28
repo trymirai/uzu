@@ -7,11 +7,13 @@ use crate::{
         common::gpu_types::{
             kv_layout,
             qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::{RoPEGridParams, RoPEKind},
             trie::TrieNode,
         },
         cpu::kernel::{
             activation_transform::{INT8_SYMMETRIC_QUANTIZATION_MAXIMUM as INT8_MAX, hadamard_transform},
-            attention::rope::apply_rope,
+            attention::rope::{apply_rope, mrope_axis_offset},
+            vision::patch_grid::vision_patch_coordinates,
         },
     },
     data_type::DataTypeRepr,
@@ -28,7 +30,7 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[optional(append_kv)] k_scales: Option<*mut bf16>,
     #[optional(append_kv)] v_codes: Option<*mut u8>,
     #[optional(append_kv)] v_scales: Option<*mut bf16>,
-    #[optional(has_rope)] rope_inverse_frequencies: Option<*const f32>,
+    #[optional(rope_kind != RoPEKind::None)] rope_inverse_frequencies: Option<*const f32>,
     #[optional(has_query_norm_scales)] query_norm_scales: Option<*const f32>,
     #[optional(has_key_norm_scales)] key_norm_scales: Option<*const f32>,
     #[optional(has_value_norm_scales)] value_norm_scales: Option<*const f32>,
@@ -37,16 +39,19 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[optional(block_mean)] raw_keys: Option<*mut ElementT>,
     norm_params: QKVNormParams,
     num_q_heads: u32,
-    #[optional(has_rope)] rope_dim: Option<u32>,
-    #[optional(has_rope)] rope_scale: Option<f32>,
-    #[optional(has_rope)] rope_position_offset: Option<u32>,
+    #[optional(rope_kind != RoPEKind::None)] rope_dim: Option<u32>,
+    #[optional(rope_kind != RoPEKind::None)] rope_scale: Option<f32>,
+    #[optional(rope_kind != RoPEKind::None)] rope_position_offset: Option<u32>,
+    #[optional(rope_kind == RoPEKind::ContiguousGrid || rope_kind == RoPEKind::InterleavedGrid)] rope_grid: Option<
+        RoPEGridParams,
+    >,
     kv_token_offset: u32,
     input_row_stride: u32,
     suffix_length: u32,
     query_rows: u32,
     #[optional(block_mean)] prefix_tokens: Option<u32>,
     #[optional(has_trie)] trie: Option<*const TrieNode>,
-    #[specialize] has_rope: bool,
+    #[specialize] rope_kind: RoPEKind,
     #[specialize] num_kv_heads: u32,
     #[specialize] backend_opaque_layout: u32,
     #[specialize] append_kv: bool,
@@ -58,6 +63,8 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
     #[specialize] has_trie: bool,
 ) {
     let head_dim = HEAD_DIM as usize;
+    let has_rope = rope_kind != RoPEKind::None;
+    let has_mrope = matches!(rope_kind, RoPEKind::ContiguousGrid | RoPEKind::InterleavedGrid);
     let rope_dim = if has_rope {
         rope_dim.unwrap() as usize
     } else {
@@ -102,6 +109,17 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             } else {
                 token
             };
+            let mut rope_position = rope_position_offset.unwrap_or(0) + rope_row;
+            let (mut grid_row, mut grid_column) = (0, 0);
+            if has_mrope {
+                // Rows are cells of grids in raster order: a text token is a 1x1 grid, a trie node sits at its height
+                let grid = rope_grid.unwrap();
+                let cell = grid.first_cell + rope_row;
+                let grid_size = grid.grid_width * grid.grid_height;
+                rope_position =
+                    rope_position_offset.unwrap() + cell / grid_size * grid.grid_width.max(grid.grid_height);
+                (grid_column, grid_row) = vision_patch_coordinates(cell % grid_size, grid.grid_width, grid.merge_size);
+            }
             let mut source = unsafe { qkvg.add((token * input_row_stride + head * HEAD_DIM) as usize) };
             if block_mean {
                 let token = token as usize;
@@ -151,11 +169,24 @@ pub fn attention_prepare<ElementT: DataTypeRepr + Float, const HEAD_DIM: u32>(
             }
             for (channel, value) in values.iter_mut().enumerate() {
                 let element = if (is_query || is_key) && channel < rope_dim {
+                    let mut position = rope_position;
+                    if has_mrope {
+                        let grid = rope_grid.unwrap();
+                        position += mrope_axis_offset(
+                            (channel % (rope_dim / 2)) as u32,
+                            (rope_dim / 2) as u32,
+                            grid_row,
+                            grid_column,
+                            grid.height_pairs,
+                            grid.width_pairs,
+                            rope_kind == RoPEKind::InterleavedGrid,
+                        );
+                    }
                     apply_rope::<ElementT, _>(
                         source,
                         rope_inverse_frequencies.unwrap(),
                         rope_scale.unwrap(),
-                        rope_position_offset.unwrap() + rope_row,
+                        position,
                         channel,
                         rope_dim,
                     )

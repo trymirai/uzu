@@ -2,6 +2,33 @@ use num_traits::Float;
 
 use crate::data_type::DataTypeRepr;
 
+pub(super) fn mrope_axis_offset(
+    pair: u32,
+    pairs: u32,
+    grid_row: u32,
+    grid_column: u32,
+    height_pairs: u32,
+    width_pairs: u32,
+    interleaved_axes: bool,
+) -> u32 {
+    if !interleaved_axes {
+        let position_pairs = pairs - height_pairs - width_pairs;
+        if pair < position_pairs {
+            0
+        } else if pair < position_pairs + height_pairs {
+            grid_row
+        } else {
+            grid_column
+        }
+    } else if pair % 3 == 1 && pair < 3 * height_pairs {
+        grid_row
+    } else if pair % 3 == 2 && pair < 3 * width_pairs {
+        grid_column
+    } else {
+        0
+    }
+}
+
 pub(super) fn apply_rope<ResultT: DataTypeRepr + Float, ElementT: DataTypeRepr + Float>(
     head: *const ElementT,
     inverse_frequencies: *const f32,

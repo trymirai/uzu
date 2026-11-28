@@ -1,4 +1,5 @@
 pub mod batch_topology;
+pub mod cell_grid;
 pub mod classifier;
 pub mod confidence_head;
 pub mod convolution;
@@ -18,6 +19,7 @@ pub mod sampling;
 pub mod stream_op;
 pub mod transformer;
 pub mod transformer_layer;
+pub mod vision;
 pub mod weaver;
 pub mod weaver_layer;
 pub mod weight_matrix;

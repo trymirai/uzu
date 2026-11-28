@@ -19,4 +19,5 @@ mod short_conv;
 mod tensor_add_bias_test;
 mod tensor_add_scale_test;
 mod trellis_test;
+mod vision_test;
 mod weaver;

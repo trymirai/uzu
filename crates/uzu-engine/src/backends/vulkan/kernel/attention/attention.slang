@@ -28,13 +28,13 @@ static const float ROPE_TWO_PI_LO = -1.7484555314695172e-7;
 // Rotates `value` against its RoPE pair `paired` at `position`; `channel` indexes the value within the rotated
 // `rope_dim` channels, whose inverse frequencies repeat across both halves.
 public float rope_rotate(
-  float value,
-  float paired,
-  Ptr<float, Access.Read> inverse_frequencies,
-  float scale,
-  uint position,
-  uint channel,
-  uint rope_dim
+    float value,
+    float paired,
+    Ptr<float, Access.Read> inverse_frequencies,
+    float scale,
+    uint position,
+    uint channel,
+    uint rope_dim
 ) {
   let half = rope_dim / 2;
   let angle = float(position) * inverse_frequencies[channel % half];
@@ -43,6 +43,31 @@ public float rope_rotate(
   let reduced = fma(-turns, ROPE_TWO_PI_LO, fma(-turns, ROPE_TWO_PI_HI, angle));
   let signed_paired = channel < half ? -paired : paired;
   return value * (cos(reduced) * scale) + signed_paired * (sin(reduced) * scale);
+}
+
+public uint mrope_axis_offset(
+    uint pair,
+    uint pairs,
+    uint grid_row,
+    uint grid_column,
+    uint height_pairs,
+    uint width_pairs,
+    bool interleaved_axes
+) {
+  if (!interleaved_axes) {
+    let position_pairs = pairs - height_pairs - width_pairs;
+    if (pair < position_pairs) {
+      return 0;
+    }
+    return pair < position_pairs + height_pairs ? grid_row : grid_column;
+  }
+  if (pair % 3 == 1 && pair < 3 * height_pairs) {
+    return grid_row;
+  }
+  if (pair % 3 == 2 && pair < 3 * width_pairs) {
+    return grid_column;
+  }
+  return 0;
 }
 
 float rotation_sign(uint channel) {
@@ -79,7 +104,11 @@ public void attention_unrotate<let THREADS : uint>(inout float values[ATTENTION_
   }
 }
 
-public bf16 attention_quantize<let THREADS : uint>(float values[ATTENTION_DIMS], uint dims, out int codes[ATTENTION_DIMS]) {
+public bf16 attention_quantize<let THREADS : uint>(
+    float values[ATTENTION_DIMS],
+    uint dims,
+    out int codes[ATTENTION_DIMS]
+) {
   var largest = 0.0;
   for (uint a = 0; a < dims; a++) {
     largest = max(largest, abs(values[a]));
@@ -99,11 +128,11 @@ public bf16 attention_quantize<let THREADS : uint>(float values[ATTENTION_DIMS],
   return scale;
 }
 
-public float2 attention_single_query<Keys: IAttentionKeys>(
-  Keys source,
-  uint head_dim,
-  uint sequence_length,
-  float scale
+public float2 attention_single_query<Keys : IAttentionKeys>(
+    Keys source,
+    uint head_dim,
+    uint sequence_length,
+    float scale
 ) {
   let invocation = subgroup_invocation();
   let group = invocation / SIMD_SIZE;
@@ -158,9 +187,8 @@ public float2 attention_single_query<Keys: IAttentionKeys>(
   for (uint a = 0; a < dims; a++) {
     attention_outputs[lane * SIMD_SIZE + group] = accumulators[a];
     GroupMemoryBarrierWithGroupSync();
-    let numerator = segment_reduce<Sum<float>, ATTENTION_THREADS>(
-      attention_outputs[group * SIMD_SIZE + lane] * factor, SIMD_SIZE
-    );
+    let numerator =
+        segment_reduce<Sum<float>, ATTENTION_THREADS>(attention_outputs[group * SIMD_SIZE + lane] * factor, SIMD_SIZE);
     GroupMemoryBarrierWithGroupSync();
     if (lane == 0) {
       attention_numerators[group * dims + a] = numerator;
@@ -170,6 +198,4 @@ public float2 attention_single_query<Keys: IAttentionKeys>(
   return float2(largest, denominator);
 }
 
-public float attention_numerator(uint dimension) {
-  return attention_numerators[dimension];
-}
+public float attention_numerator(uint dimension) { return attention_numerators[dimension]; }

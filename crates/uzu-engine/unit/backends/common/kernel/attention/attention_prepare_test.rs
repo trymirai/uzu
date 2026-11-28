@@ -7,11 +7,17 @@ use crate::{
         Backend, CommandBufferEncoding, CommandBufferExecutable, CommandBufferPending, Context, Kernels,
         gpu_types::{
             qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::{RoPEGridParams, RoPEKind},
             trie::TrieNode,
         },
         kernel::AttentionPrepareKernel,
     },
     data_type::DataType,
+    encodable_block::{
+        batch_topology::BatchTopology,
+        cell_grid::CellGrid,
+        mixer::attention::rope::{RoPE, RoPEAxes},
+    },
     tests::{
         attention::kv_layout,
         helpers::{buffer_to_vec, create_buffer_with_data, for_each_backend},
@@ -110,7 +116,11 @@ fn run_prepare<B: Backend, const DIM: usize>(
         &context,
         DataType::BF16,
         DIM as u32,
-        rope,
+        if rope {
+            RoPEKind::Sequential
+        } else {
+            RoPEKind::None
+        },
         1,
         layout.backend_opaque_layout,
         true,
@@ -167,6 +177,7 @@ fn run_prepare<B: Backend, const DIM: usize>(
         rope.then_some(rope_dim),
         rope.then_some(1.0),
         rope.then_some(5),
+        None,
         33,
         (num_q_heads + 2) * DIM as u32 + ROW_PADDING as u32,
         SUFFIX as u32,
@@ -226,4 +237,164 @@ fn test_attention_prepare_fused_norm() {
     check::<128>();
     check::<256>();
     check::<512>();
+}
+
+/// Codes and scales of the query head of each of `rows`, rotated at `position_offset + row` or over `grid`
+fn run_rope_queries<B: Backend>(
+    context: &B::Context,
+    dim: usize,
+    rows: &[bf16],
+    inverse_frequencies: &[f32],
+    position_offset: u32,
+    grid: Option<(RoPEKind, RoPEGridParams)>,
+) -> (Vec<i8>, Vec<bf16>) {
+    let suffix = rows.len() / dim;
+    let kernel = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+        context,
+        DataType::BF16,
+        dim as u32,
+        grid.map_or(RoPEKind::Sequential, |(kind, _)| kind),
+        1,
+        kv_layout::<B>(context, dim as u32, 1).backend_opaque_layout,
+        false,
+        false,
+        false,
+        false,
+        false,
+        0,
+        false,
+    )
+    .unwrap();
+    let qkvg = create_buffer_with_data::<B, bf16>(context, rows);
+    let inverse_frequencies_buffer = create_buffer_with_data::<B, f32>(context, inverse_frequencies);
+    let mut q_codes = create_buffer_with_data::<B, i8>(context, &vec![0; suffix * dim]);
+    let mut q_scales = create_buffer_with_data::<B, bf16>(context, &vec![bf16::ZERO; suffix]);
+    let mut command_buffer = context.create_command_buffer(None, None).unwrap();
+    kernel.encode(
+        &qkvg,
+        &mut q_codes,
+        &mut q_scales,
+        None::<&mut B::GlobalGpuBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
+        Some(&inverse_frequencies_buffer),
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&B::GlobalGpuBuffer>,
+        None::<&mut B::GlobalGpuBuffer>,
+        QKVNormParams::default(),
+        1,
+        Some(2 * inverse_frequencies.len() as u32),
+        Some(1.0),
+        Some(position_offset),
+        grid.map(|(_, params)| params),
+        0,
+        dim as u32,
+        suffix as u32,
+        suffix as u32,
+        None,
+        None::<&B::GlobalGpuBuffer>,
+        &mut command_buffer,
+    );
+    block_on(command_buffer.end_encoding().submit().wait_until_completed()).unwrap();
+    (buffer_to_vec::<B, i8>(context, &q_codes), buffer_to_vec::<B, bf16>(context, &q_scales))
+}
+
+/// Checks M-RoPE over `grid` against plain RoPE. `axes` is the axis of each pair: 0 position, 1 row, 2 column;
+/// `positions` are the expected positions of each row of the batch along the three axes.
+fn check_mrope<B: Backend>(
+    dim: usize,
+    axes: &[usize],
+    grid: (RoPEKind, RoPEGridParams),
+    position_offset: u32,
+    positions: &[[u32; 3]],
+) {
+    let context = block_on(B::Context::new()).unwrap();
+    let pairs = axes.len();
+    let frequencies: Vec<f32> = (0..pairs).map(|pair| 10_000f32.powf(-(pair as f32) / pairs as f32)).collect();
+    let rows: Vec<bf16> = (0..positions.len() * dim).map(|i| bf16::from_f32((i as f32 * 0.37).sin())).collect();
+    let (codes, scales) = run_rope_queries::<B>(&context, dim, &rows, &frequencies, position_offset, Some(grid));
+    for (row, positions) in positions.iter().enumerate() {
+        // Plain RoPE at position 1 turns a pair by its frequency, so scale each by the position along its axis
+        let scaled: Vec<f32> =
+            frequencies.iter().zip(axes).map(|(frequency, &axis)| positions[axis] as f32 * frequency).collect();
+        let (expected_codes, expected_scales) =
+            run_rope_queries::<B>(&context, dim, &rows[row * dim..][..dim], &scaled, 1, None);
+        assert_eq!(
+            (&codes[row * dim..][..dim], scales[row]),
+            (&expected_codes[..], expected_scales[0]),
+            "grid {grid:?} row {row}"
+        );
+    }
+}
+
+/// Kernel kind and grid the attention block passes to the kernel for `batch`
+fn grid_params<B: Backend>(
+    context: &B::Context,
+    pairs: u32,
+    axes: RoPEAxes,
+    batch: BatchTopology<B>,
+) -> (RoPEKind, RoPEGridParams) {
+    let rope = RoPE {
+        axes,
+        ..RoPE::from_inverse_frequencies(&vec![1.0; pairs as usize], 1.0, 2 * pairs, 1, context).unwrap()
+    };
+    (rope.kind(), rope.grid_params(batch.kind()).unwrap())
+}
+
+#[uzu_test]
+fn test_attention_prepare_mrope() {
+    for_each_backend!(|B| {
+        // Decoder: pairs 1, 4, 7, ... of 11 rotate by the row, pairs 2, 5, 8, ... of 10 by the column
+        let mut axes = vec![0; 32];
+        (1..3 * 11).step_by(3).for_each(|pair| axes[pair] = 1);
+        (2..3 * 10).step_by(3).for_each(|pair| axes[pair] = 2);
+        let context = block_on(<B as Backend>::Context::new()).unwrap();
+        let decoder_grid = |batch| {
+            grid_params::<B>(
+                &context,
+                32,
+                RoPEAxes::InterleavedGrid {
+                    height_pairs: 11,
+                    width_pairs: 10,
+                },
+                batch,
+            )
+        };
+        // An image sits at one position, its cells go in raster order
+        let image: Vec<[u32; 3]> = (0..15).map(|cell| [7, 7 + cell / 5, 7 + cell % 5]).collect();
+        let image_grid = CellGrid::new(5, 3, 1);
+        check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::image(image_grid, 0..15)), 7, &image);
+        check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::image(image_grid, 6..10)), 7, &image[6..10]);
+        // Text tokens follow each other along all the axes
+        let text: Vec<[u32; 3]> = (7..10).map(|position| [position; 3]).collect();
+        check_mrope::<B>(64, &axes, decoder_grid(BatchTopology::flat(3)), 7, &text);
+
+        // Vision encoder: the first half of the pairs rotates by the row, the second by the column
+        let axes = [[1; 18], [2; 18]].concat();
+        let vision_grid = grid_params::<B>(
+            &context,
+            36,
+            RoPEAxes::ContiguousGrid {
+                height_pairs: 18,
+                width_pairs: 18,
+            },
+            BatchTopology::image(CellGrid::new(6, 4, 2), 0..24),
+        );
+        // Patches go block by block, each 2x2 block in raster order
+        let mut patches = Vec::new();
+        for block_row in 0..2 {
+            for block_column in 0..3 {
+                for in_row in 0..2 {
+                    for in_column in 0..2 {
+                        patches.push([0, block_row * 2 + in_row, block_column * 2 + in_column]);
+                    }
+                }
+            }
+        }
+        check_mrope::<B>(128, &axes, vision_grid, 0, &patches);
+    });
 }

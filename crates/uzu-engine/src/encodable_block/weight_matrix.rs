@@ -158,6 +158,13 @@ impl<B: Backend> WeightMatrix<B> {
         })
     }
 
+    pub fn dense(values: B::GlobalGpuBuffer) -> Self {
+        Self {
+            values,
+            encoding: WeightEncoding::Dense,
+        }
+    }
+
     pub fn values(&self) -> &B::GlobalGpuBuffer {
         &self.values
     }
