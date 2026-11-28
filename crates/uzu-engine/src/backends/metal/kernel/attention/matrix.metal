@@ -18,6 +18,7 @@ VARIANTS(IS_SPARSE, false, true)
 CONSTRAINT(!USE_MXU || NUM_SIMDGROUPS % (HEAD_DIM / 64) == 0)
 CONSTRAINT(HEAD_DIM != 256 || NUM_SIMDGROUPS % 2 == 0)
 CONSTRAINT(HEAD_DIM != 512 || NUM_SIMDGROUPS % 4 == 0)
+CONSTRAINT(USE_MXU || NUM_SIMDGROUPS != 1)
 CONSTRAINT(!IS_SPARSE || (HEAD_DIM == 256 && NUM_SIMDGROUPS == HEAD_DIM / 64))
 KERNEL(AttentionMatrix)(
     const device int8_t* query_codes,
@@ -123,11 +124,18 @@ KERNEL(AttentionMatrix)(
         partial_values,
         partial_maxima,
         partial_denominators,
+        output,
+        gate,
+        gate_row_stride,
+        sinks,
         params,
         query_tiles,
         num_splits,
         trie_nodes,
         is_trie,
+        is_split,
+        has_gate,
+        has_sinks,
         selected_blocks,
         blocks_per_query,
         compression_ratio,

@@ -45,13 +45,19 @@ struct AttentionMatrixScratch {
 
   UZU_CONST int QUERY_VECTORS_PER_BAND = int(HEAD_DIM) / (2 * uzu::kv_layout::TILE_DIMS) * METAL_SIMD_SIZE;
   UZU_CONST int QUERY_VECTORS = Layout::BANDS * QUERY_VECTORS_PER_BAND;
-  UZU_CONST int EXCHANGE_FLOATS = USE_MXU ? 2 * SLOT_FLOATS : NUM_SIMDGROUPS * 8 * SIMD_KEYS;
+  UZU_CONST int SIMD_SLICES = HEAD_DIM < 128 ? 1 : HEAD_DIM / 128;
+  using SimdLayout = AttentionMatrixLayout<SIMD_KEYS, HEAD_DIM, SIMD_SLICES, false, NUM_SIMDGROUPS>;
+  // Head slices sum their partial scores.
+  UZU_CONST int SIMD_PARTIAL_SCORE_FLOATS = SimdLayout::SIMDGROUPS * SimdLayout::SCORE_TILE_ELEMENTS;
+  // No empty Metal arrays.
+  UZU_CONST int EXCHANGE_FLOATS = USE_MXU ? 2 * SLOT_FLOATS : (SIMD_SLICES > 1 ? SIMD_PARTIAL_SCORE_FLOATS : 1);
   UZU_CONST int STAGING_VECTORS = USE_MXU ? QUERY_VECTORS : SIMD_KEYS * (HEAD_DIM + 8) / 8;
 
   // Also holds the output tile.
-  UZU_CONST int OUTPUT_TILE_BYTES =
-      Layout::SIMDGROUPS * Layout::TILE_ROWS * int(uzu::kv_layout::SLICE_DIMS) * int(sizeof(bfloat));
-  UZU_CONST int TILE_SCRATCH_VECTORS = USE_MXU && OUTPUT_TILE_BYTES > STAGING_VECTORS* int(sizeof(uint4))
+  UZU_CONST int OUTPUT_TILE_BYTES = (USE_MXU ? Layout::SIMDGROUPS * Layout::TILE_ROWS * int(uzu::kv_layout::SLICE_DIMS)
+                                             : SimdLayout::BLOCK_ROWS * int(HEAD_DIM)) *
+                                    int(sizeof(bfloat));
+  UZU_CONST int TILE_SCRATCH_VECTORS = OUTPUT_TILE_BYTES > STAGING_VECTORS* int(sizeof(uint4))
                                            ? OUTPUT_TILE_BYTES / int(sizeof(uint4))
                                            : STAGING_VECTORS;
 

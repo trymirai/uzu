@@ -89,54 +89,6 @@ struct AttentionMatrixSoftmax {
   }
 };
 
-struct RowRange {
-  uint packed; // first | last << 16
-
-  METAL_FUNC static RowRange make(uint first, uint last) { return {first | last << 16}; }
-  METAL_FUNC static RowRange all() { return make(0u, metal::numeric_limits<ushort>::max()); }
-  METAL_FUNC uint first() const thread { return packed & 0xFFFFu; }
-  METAL_FUNC uint last() const thread { return packed >> 16; }
-  METAL_FUNC bool contains(uint row) const thread { return row >= first() && row <= last(); }
-};
-
-struct VisibleKeyBlocks {
-  uint ring_blocks;
-  uint first_ring_block;
-  uint visible_ring_blocks;
-  uint first_suffix_block;
-
-  METAL_FUNC static VisibleKeyBlocks make(uint oldest_visible, uint prefix_length, uint ring_offset, bool unrotated) {
-    constexpr uint BLOCK_KEYS = uzu::kv_layout::TILE_KEYS;
-    const uint ring_blocks = prefix_length / BLOCK_KEYS;
-    const uint visible_ring_keys = oldest_visible < prefix_length ? prefix_length - oldest_visible : 0u;
-    const uint shifted = oldest_visible + ring_offset;
-    const uint oldest_slot = shifted >= prefix_length ? shifted - prefix_length : shifted;
-    const uint oldest_block = oldest_slot / BLOCK_KEYS;
-    const bool oldest_in_partial_block = oldest_block >= ring_blocks;
-    const uint first_ring_block = oldest_in_partial_block ? 0u : oldest_block;
-    const uint visible_ring_blocks =
-        unrotated || visible_ring_keys == 0u
-            ? 0u
-            : min(ring_blocks, div_ceil(oldest_slot % BLOCK_KEYS + visible_ring_keys, BLOCK_KEYS));
-    return {
-        .ring_blocks = ring_blocks,
-        .first_ring_block = first_ring_block,
-        .visible_ring_blocks = visible_ring_blocks,
-        .first_suffix_block = unrotated ? 0u : max(oldest_visible, prefix_length) / BLOCK_KEYS
-    };
-  }
-
-  METAL_FUNC uint count_until(uint end_block) const thread {
-    return visible_ring_blocks + end_block - first_suffix_block;
-  }
-
-  METAL_FUNC uint block_at(uint i) const thread {
-    const uint ring_block = first_ring_block + i;
-    return i < visible_ring_blocks ? (ring_block >= ring_blocks ? ring_block - ring_blocks : ring_block)
-                                   : first_suffix_block + i - visible_ring_blocks;
-  }
-};
-
 template <typename ScaleType, uint HEAD_DIM, uint NUM_SIMDGROUPS, bool IS_SPARSE>
 METAL_FUNC void attention_matrix_mxu(
     const device int8_t* query_codes,
@@ -245,17 +197,14 @@ METAL_FUNC void attention_matrix_mxu(
   };
   const uint query_band_offset = uint(query_band) * uint(Layout::TILE_ROWS);
   const uint ring_offset = is_kv_cache_ring ? ring_params.ring_offset : 0u;
-  const uint window = is_sliding_window ? sliding_window_size : INVALID_POSITION;
-  // Window 0 wraps: sees nothing.
-  const uint behind = is_causal ? window - 1u : window / 2u;
-  const uint ahead = is_causal ? 0u : window / 2u;
-  const uint span = behind + ahead + 1u;
+  const KeyWindow window = KeyWindow::make(is_causal, is_sliding_window, sliding_window_size);
   if (!IS_SPARSE && !mask_free && score_position.x == 0) {
     METAL_PRAGMA_UNROLL
     for (ushort row = 0; row < ROWS_PER_LANE; ++row) {
       const uint query_index = (query_row_base + lane_rows[row]) % params.q_len;
       const uint position = is_trie && is_sliding_window ? trie[query_index].height : query_index;
-      row_windows[query_band_offset + lane_rows[row]] = uint2(prefix_length - behind + position, query_index);
+      row_windows[query_band_offset + lane_rows[row]] =
+          uint2(window.oldest_visible(prefix_length, position), query_index);
     }
   }
 
@@ -271,30 +220,19 @@ METAL_FUNC void attention_matrix_mxu(
   );
   const uint tile_first_row = query_tile_index * uint(Layout::BLOCK_ROWS);
   const uint tile_last_row = min(tile_first_row + uint(Layout::BLOCK_ROWS) - 1u, num_query_rows - 1u);
-  const bool one_head = tile_first_row / params.q_len == tile_last_row / params.q_len;
-  const uint first_query = one_head && !is_trie ? tile_first_row % params.q_len : 0u;
-  const uint last_query = one_head ? tile_last_row % params.q_len : params.q_len - 1u;
-  const uint oldest_visible = is_sliding_window ? max(prefix_length + first_query, behind) - behind : 0u;
-  auto key_position = [&](uint key) UZU_ALWAYS_INLINE {
-    if (key >= key_length) {
-      return INVALID_POSITION;
-    }
-    if (key >= prefix_length) {
-      return key;
-    }
-    return key >= ring_offset ? key - ring_offset : key + prefix_length - ring_offset;
-  };
   constexpr uint BLOCK_KEYS = uzu::kv_layout::TILE_KEYS;
-  const bool unrotated = IS_SPARSE || !(is_kv_cache_ring || is_sliding_window);
-  const VisibleKeyBlocks visible = VisibleKeyBlocks::make(oldest_visible, prefix_length, ring_offset, unrotated);
-  // This split's share of the visible blocks, stopped at the last query's causal limit.
+  const VisibleKeyBlocks visible = VisibleKeyBlocks::make<BLOCK_KEYS>(
+      window,
+      is_causal,
+      prefix_length,
+      ring_offset,
+      IS_SPARSE || !(is_kv_cache_ring || is_sliding_window),
+      tile_query_range(tile_first_row, tile_last_row, params.q_len, is_trie)
+  );
   const uint total = IS_SPARSE ? div_ceil(sparse_keys.key_count(), BLOCK_KEYS) : visible.count_until(params.nk);
-  const uint first_block = split_index * total / num_splits;
-  uint end_block = (split_index + 1u) * total / num_splits;
-  if (is_causal) {
-    end_block = min(end_block, visible.count_until(div_ceil(prefix_length + last_query + 1u, BLOCK_KEYS)));
-  }
-  const uint block_count = end_block > first_block ? end_block - first_block : 0u;
+  const uint2 split_blocks = visible.split(total, split_index, num_splits);
+  const uint first_block = split_blocks.x;
+  const uint block_count = split_blocks.y - first_block;
 
   const AccumType log2_attention_scale = AccumType(params.scale) * AccumType(M_LOG2E_F);
 
@@ -426,7 +364,8 @@ METAL_FUNC void attention_matrix_mxu(
           } else {
             scale_index =
                 head_scale_base + key_block * shape.scale_block_stride() + uint(score_position.x) + uint(scale_col);
-            key_positions[lane_col] = key_position(key_base + lane_column_key(lane_col));
+            key_positions[lane_col] =
+                position_of_key(key_base + lane_column_key(lane_col), key_length, prefix_length, ring_offset);
             valid = mask_free || key_positions[lane_col] != INVALID_POSITION;
           }
           // Zero so masked scores stay -inf.
@@ -467,7 +406,7 @@ METAL_FUNC void attention_matrix_mxu(
         const uint2 query = row_windows[query_band_offset + lane_rows[row]];
         const uint oldest_visible = query.x;
         const uint query_index = query.y;
-        bool visible = key_positions[column] - oldest_visible < span;
+        bool visible = window.sees(oldest_visible, key_positions[column]);
         if (is_trie && is_causal) {
           visible = visible && seeing_rows[column].contains(query_index);
         }
