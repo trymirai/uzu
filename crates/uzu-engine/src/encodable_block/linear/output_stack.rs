@@ -15,8 +15,8 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::linear::{
-        InputAccess, InputPreparationMode, InputRhtParameters, Linear, LinearBlockError, LinearEncodeError,
-        LinearInput, LinearInputPreparation, LinearMatmul, OutputBasis,
+        AneWeightLayer, InputAccess, InputPreparationMode, InputRhtParameters, Linear, LinearBlockError,
+        LinearEncodeError, LinearInput, LinearInputPreparation, LinearMatmul, OutputBasis,
         input_preparation::{InputPreparation, ScalarPreparation, TrellisPreparation},
     },
     safetensors::ParameterTree,
@@ -27,6 +27,8 @@ struct Part<B: Backend> {
     rows: Range<u32>,
     preparation: InputPreparation<B>,
     rotation: Option<usize>,
+    input_hadamard_size: Option<u32>,
+    external_input_signs: Option<Arc<B::GlobalGpuBuffer>>,
 }
 
 pub enum OutputRows<I> {
@@ -42,6 +44,7 @@ pub struct OutputStack<B: Backend> {
     data_type: DataType,
     output_dim: u32,
     output_rotation: Option<(ActivationTransform<B>, B::GlobalGpuBuffer)>,
+    stacked: bool,
 }
 
 impl<B: Backend> OutputStack<B> {
@@ -188,6 +191,7 @@ impl<B: Backend> OutputStack<B> {
                 shared_rotation
             };
             let rht = rotation.map(|index| &loaded_rotations[index].0);
+            let input_hadamard_size = rht.map(|rht| rht.hadamard_size);
             let quantized_tree = hadamard_size.map(|_| tree.subtree("quantized"));
             let tree = quantized_tree.as_ref().unwrap_or(tree);
             let mut matrix = LinearMatmul::load(
@@ -208,6 +212,11 @@ impl<B: Backend> OutputStack<B> {
                 && matches!(mode,
                     InputPreparationMode::AllowExternal { allow_quantized_activations }
                         if allow_quantized_activations || format == ActivationFormat::Bf16);
+            let external_input_rht = if use_external {
+                rht.map(|rht| rht.signs.clone())
+            } else {
+                None
+            };
             let (rht, format) = if use_external {
                 external = rht.map(|rht| LinearInputPreparation {
                     rht: InputRhtParameters {
@@ -239,6 +248,8 @@ impl<B: Backend> OutputStack<B> {
                 rows,
                 preparation,
                 rotation,
+                input_hadamard_size,
+                external_input_signs: external_input_rht,
             });
         }
         Ok((
@@ -247,6 +258,7 @@ impl<B: Backend> OutputStack<B> {
                 data_type: output_data_type,
                 output_dim,
                 output_rotation,
+                stacked,
             },
             external,
         ))
@@ -254,6 +266,32 @@ impl<B: Backend> OutputStack<B> {
 }
 
 impl<B: Backend> OutputStack<B> {
+    pub fn ane_weights<'a>(
+        &'a self,
+        fused_input_rht: Option<(u32, &'a B::GlobalGpuBuffer)>,
+    ) -> Option<AneWeightLayer<'a, B>> {
+        if self.stacked || self.parts.len() != 1 || self.output_rotation.is_some() {
+            return None;
+        }
+        let [part] = &*self.parts else {
+            return None;
+        };
+        if part.rows.start != 0 || part.rows.end != self.output_dim {
+            return None;
+        }
+        let (input_hadamard_size, input_signs) = if let Some((size, signs)) = fused_input_rht {
+            (size, signs)
+        } else if let Some(signs) = &part.external_input_signs {
+            (part.input_hadamard_size?, &**signs)
+        } else {
+            let InputPreparation::Scalar(preparation) = &part.preparation else {
+                return None;
+            };
+            (part.input_hadamard_size?, preparation.rht_signs()?)
+        };
+        part.matrix.ane_weights(Some((input_hadamard_size, input_signs)))
+    }
+
     pub fn encode_input(
         &self,
         input: MatmulA<impl BufferRef<Backend = B>>,
@@ -420,5 +458,12 @@ impl<B: Backend> Linear<B> for OutputStack<B> {
             }),
             _ => ActivationFormat::Bf16,
         }
+    }
+
+    fn ane_weights<'a>(
+        &'a self,
+        fused_input_rht: Option<(u32, &'a B::GlobalGpuBuffer)>,
+    ) -> Option<AneWeightLayer<'a, B>> {
+        OutputStack::ane_weights(self, fused_input_rht)
     }
 }

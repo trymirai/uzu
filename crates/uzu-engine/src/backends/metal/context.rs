@@ -15,23 +15,31 @@ use metal::{
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use parking_lot::Mutex;
 
-use crate::backends::{
-    common::{
-        Backend, BufferRef, Context, CpuBuffer, DeviceCapabilities,
-        allocator::{block::BlockAllocator, pool::PoolAllocator},
-        capture_matcher::CAPTURE_MATCHER,
+use crate::{
+    backends::{
+        common::{
+            Backend, BufferRef, Context, CpuBuffer, DeviceCapabilities,
+            allocator::{block::BlockAllocator, pool::PoolAllocator},
+            capture_matcher::CAPTURE_MATCHER,
+        },
+        metal::{
+            Metal,
+            ane::Ane,
+            buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
+            capture::MetalCaptureSpan,
+            command_buffer::MetalCommandBufferEncoding,
+            decompression,
+            error::MetalError,
+            heaps::MetalHeaps,
+            kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
+            metal_extensions::{DeviceExt, LibraryPipelineExtensions},
+            timestamp_recorder::MetalGpuClock,
+        },
     },
-    metal::{
-        Metal,
-        buffer::{dense::MetalDenseBuffer, sparse::MetalSparseBuffer},
-        capture::MetalCaptureSpan,
-        command_buffer::MetalCommandBufferEncoding,
-        decompression,
-        error::MetalError,
-        heaps::MetalHeaps,
-        kernel::{BlitCopyMetalKernel, BlitFillMetalKernel},
-        metal_extensions::{DeviceExt, LibraryPipelineExtensions},
-        timestamp_recorder::MetalGpuClock,
+    data_type::DataType,
+    encodable_block::{
+        linear::Linear,
+        mlp::{DenseMlp, Mlp},
     },
 };
 
@@ -59,6 +67,7 @@ pub struct MetalContext {
     pub(super) blit_copy: [OnceLock<BlitCopyMetalKernel>; 3],
     pub(super) blit_fill: [OnceLock<BlitFillMetalKernel>; 2],
     gpu_clock: OnceLock<MetalGpuClock>,
+    ane: Ane,
     weak_self: Weak<MetalContext>,
 }
 
@@ -182,6 +191,7 @@ impl Context for MetalContext {
             blit_copy: std::array::from_fn(|_| OnceLock::new()),
             blit_fill: std::array::from_fn(|_| OnceLock::new()),
             gpu_clock: OnceLock::new(),
+            ane: Ane::new(gpu_core_count),
             weak_self: weak_self.clone(),
         }))
     }
@@ -251,5 +261,31 @@ impl Context for MetalContext {
             capabilities |= DeviceCapabilities::SPARSE_BUFFERS;
         }
         capabilities
+    }
+
+    fn disable_neural_engine(&self) {
+        self.ane.disable();
+    }
+
+    fn wrap_mlp(
+        &self,
+        mlp: DenseMlp<Metal>,
+    ) -> Box<dyn Mlp<Metal>> {
+        self.ane.wrap_mlp(self, mlp)
+    }
+
+    fn wrap_linear(
+        &self,
+        linear: Box<dyn Linear<Metal>>,
+        data_type: DataType,
+    ) -> Box<dyn Linear<Metal>> {
+        self.ane.wrap_linear(self, linear, data_type)
+    }
+
+    fn prefill_chunk_lengths(
+        &self,
+        prompt_length: usize,
+    ) -> Option<Vec<usize>> {
+        self.ane.prefill_chunk_lengths(prompt_length)
     }
 }

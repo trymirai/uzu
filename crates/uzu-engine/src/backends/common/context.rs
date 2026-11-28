@@ -2,7 +2,14 @@ use std::{path::Path, sync::Arc};
 
 use bytemuck::AnyBitPattern;
 
-use crate::backends::common::{Backend, BufferRef, CommandBuffer, DeviceCapabilities};
+use crate::{
+    backends::common::{Backend, BufferRef, CommandBuffer, DeviceCapabilities},
+    data_type::DataType,
+    encodable_block::{
+        linear::Linear,
+        mlp::{DenseMlp, Mlp},
+    },
+};
 
 pub trait Context: Sized + Send + Sync {
     type Backend: Backend<Context = Self>;
@@ -47,4 +54,33 @@ pub trait Context: Sized + Send + Sync {
     ) -> Result<<Self::Backend as Backend>::CaptureSpan, <Self::Backend as Backend>::Error>;
 
     fn device_capabilities(&self) -> DeviceCapabilities;
+
+    /// Keeps the backend's Neural Engine off (only Metal has one).
+    fn disable_neural_engine(&self) {}
+
+    /// Lets the backend run a dense MLP on other hardware (the Neural Engine); default: as built.
+    fn wrap_mlp(
+        &self,
+        mlp: DenseMlp<Self::Backend>,
+    ) -> Box<dyn Mlp<Self::Backend>> {
+        Box::new(mlp)
+    }
+
+    /// Lets the backend run a mixer's projection on other hardware (the Neural Engine); default: as built.
+    fn wrap_linear(
+        &self,
+        linear: Box<dyn Linear<Self::Backend>>,
+        _data_type: DataType,
+    ) -> Box<dyn Linear<Self::Backend>> {
+        linear
+    }
+
+    /// The chunk lengths of a prefill, if the backend overlaps pairs of chunks (see
+    /// `Transformer::encode_chunks`) and so gains from splitting short prompts. Default: it does not.
+    fn prefill_chunk_lengths(
+        &self,
+        _prompt_length: usize,
+    ) -> Option<Vec<usize>> {
+        None
+    }
 }

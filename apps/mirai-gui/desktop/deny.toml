@@ -25,3 +25,6 @@ allow = [
 
 [bans]
 multiple-versions = "allow"
+
+[sources]
+allow-git = ["https://github.com/computer-graphics-tools/ane"]

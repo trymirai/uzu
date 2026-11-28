@@ -26,4 +26,7 @@ allow = [
 multiple-versions = "allow"
 
 [sources]
-allow-git = ["https://github.com/trymirai/slang-rs"]
+allow-git = [
+    "https://github.com/trymirai/slang-rs",
+    "https://github.com/computer-graphics-tools/ane",
+]

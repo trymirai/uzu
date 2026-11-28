@@ -31,7 +31,15 @@ pub enum EngineNewError<B: Backend> {
 
 impl<B: Backend> Engine<B> {
     pub async fn new() -> Result<Arc<Self>, EngineNewError<B>> {
+        Self::with_neural_engine(true).await
+    }
+
+    /// [`Self::new`], with the Neural Engine on or off (Metal only; other backends ignore it).
+    pub async fn with_neural_engine(neural_engine: bool) -> Result<Arc<Self>, EngineNewError<B>> {
         let context = <B::Context as Context>::new().await.map_err(EngineNewError::Backend)?;
+        if !neural_engine {
+            context.disable_neural_engine();
+        }
         let capture_span = CAPTURE_MATCHER.capture::<B>(&context, "")?;
 
         Ok(Arc::new(Self {

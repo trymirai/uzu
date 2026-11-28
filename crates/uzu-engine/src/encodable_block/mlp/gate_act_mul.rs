@@ -20,6 +20,7 @@ pub struct MlpGateActMulEncodable<B: Backend> {
     hidden_dim: u32,
     data_type: DataType,
     hadamard_factors: Option<Arc<B::GlobalGpuBuffer>>,
+    hadamard_size: Option<u32>,
     quantized_kernel: Option<GatedActMul<B>>,
 }
 
@@ -53,8 +54,18 @@ impl<B: Backend> MlpGateActMulEncodable<B> {
             hidden_dim,
             data_type,
             hadamard_factors: rht.map(|rht| rht.signs),
+            hadamard_size,
             quantized_kernel,
         })
+    }
+
+    /// The down projection's input RHT signs this block applies, if any.
+    pub fn input_rht(&self) -> Option<&B::GlobalGpuBuffer> {
+        self.hadamard_factors.as_deref()
+    }
+
+    pub fn input_hadamard_size(&self) -> Option<u32> {
+        self.hadamard_size
     }
 
     pub fn encode_for_linear(

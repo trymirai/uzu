@@ -135,6 +135,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.prefill_cache_skips_trailing_layers()
     }
 
+    pub fn supports_layerwise_prefill_pipelining(&self) -> bool {
+        self.per_layer_embedding.is_none() && self.transformer.supports_layerwise_prefill_pipelining()
+    }
+
     pub fn create_empty_state(
         &self,
         max_context_length: Option<u32>,
@@ -152,27 +156,60 @@ impl<B: Backend> Decoder<B> {
         state: &mut TransformerState<B>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
+        self.encode_chunks(
+            &[token_ids],
+            &[batch_dim],
+            output_range,
+            hidden_feature_layer_indices,
+            state,
+            command_buffer,
+        )
+    }
+
+    /// Consecutive prefill chunks, see [`Transformer::encode_chunks`]. The output range applies to
+    /// the last chunk; requested hidden features include all chunks in input order.
+    pub fn encode_chunks(
+        &self,
+        token_ids: &[impl BufferRef<Backend = B>],
+        batch_dims: &[&BatchTopology<B>],
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        state: &mut TransformerState<B>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<DecoderEncodeOutput<B>, DecoderError<B>> {
+        assert!(!token_ids.is_empty(), "prefill needs at least one chunk");
+        assert_eq!(token_ids.len(), batch_dims.len(), "each prefill chunk needs a batch topology");
+        if token_ids.len() > 2 {
+            return Err(DecoderError::TransformerEncode(TransformerEncodeError::TooManyPrefillChunks(token_ids.len())));
+        }
+        assert!(
+            token_ids.len() == 1 || self.supports_layerwise_prefill_pipelining(),
+            "the model's chunks cannot be overlapped"
+        );
         let command_buffer = &mut *command_buffer.debug_group("decoder");
 
-        let embedded = self.embedding.encode_lookup(token_ids, batch_dim.size(), command_buffer)?;
-        let embedded = if let Some(embedding_norm) = &self.embedding_norm {
-            embedding_norm
-                .encode(&embedded, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
-                .map_err(DecoderError::Backend)?
-        } else {
-            embedded
-        };
+        let mut embedded = Vec::with_capacity(token_ids.len());
+        for (token_ids, batch_dim) in token_ids.iter().zip(batch_dims) {
+            let looked_up = self.embedding.encode_lookup(*token_ids, batch_dim.size(), command_buffer)?;
+            embedded.push(if let Some(embedding_norm) = &self.embedding_norm {
+                embedding_norm
+                    .encode(&looked_up, 0, batch_dim.size(), None::<&mut B::ScratchBuffer>, command_buffer)
+                    .map_err(DecoderError::Backend)?
+            } else {
+                looked_up
+            });
+        }
 
         let per_layer_inputs = if let Some(per_layer_embedding) = &self.per_layer_embedding {
-            Some(per_layer_embedding.encode(token_ids, &embedded, batch_dim.size(), command_buffer)?)
+            Some(per_layer_embedding.encode(token_ids[0], &embedded[0], batch_dims[0].size(), command_buffer)?)
         } else {
             None
         };
 
-        let transformer_output = self.transformer.encode(
+        let transformer_output = self.transformer.encode_chunks(
             embedded,
             per_layer_inputs.as_ref(),
-            batch_dim,
+            batch_dims,
             output_range,
             hidden_feature_layer_indices,
             Some(state),

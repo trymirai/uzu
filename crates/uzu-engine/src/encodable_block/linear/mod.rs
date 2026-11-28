@@ -1,10 +1,12 @@
 use derive_more::Debug;
 use thiserror::Error;
 
+mod ane_weights;
 mod input_preparation;
 mod matmul;
 mod output_stack;
 
+pub use ane_weights::AneWeightLayer;
 pub use input_preparation::InputRhtParameters;
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use output_stack::{OutputRows, OutputStack};
@@ -30,6 +32,8 @@ pub enum LinearEncodeError<B: Backend> {
     Matmul(#[source] <<B::Kernels as Kernels>::MatmulKernel as MatmulKernel>::Error),
     #[error("Unsupported linear input: {0}")]
     UnsupportedInput(&'static str),
+    #[error("the selected linear input basis is no longer available")]
+    InputBasisUnavailable,
 }
 
 pub trait Linear<B: Backend>: Send + Sync {
@@ -49,6 +53,19 @@ pub trait Linear<B: Backend>: Send + Sync {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, LinearEncodeError<B>>;
 
+    fn encode_for_basis(
+        &self,
+        input: B::ScratchBuffer,
+        batch_dim: u32,
+        basis: InputBasis,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, LinearEncodeError<B>> {
+        if basis == InputBasis::AneUnrotated {
+            return Err(LinearEncodeError::InputBasisUnavailable);
+        }
+        self.encode(input, batch_dim, command_buffer)
+    }
+
     fn select_activation_format(
         &self,
         _batch_dim: u32,
@@ -56,6 +73,26 @@ pub trait Linear<B: Backend>: Send + Sync {
         _context: &B::Context,
     ) -> ActivationFormat {
         ActivationFormat::Bf16
+    }
+
+    fn input_basis(
+        &self,
+        _batch_dim: u32,
+    ) -> InputBasis {
+        InputBasis::GpuExpected
+    }
+
+    fn supports_unrotated_input(&self) -> bool {
+        false
+    }
+
+    /// The compact projection and its source rotations, if the accelerator can restage this layer.
+    /// A layer that takes no input rotation itself uses `fused_input_rht` from the preceding block.
+    fn ane_weights<'a>(
+        &'a self,
+        _fused_input_rht: Option<(u32, &'a B::GlobalGpuBuffer)>,
+    ) -> Option<AneWeightLayer<'a, B>> {
+        None
     }
 }
 
@@ -76,6 +113,12 @@ pub enum InputAccess {
 pub enum OutputBasis {
     Original,
     Rotated,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InputBasis {
+    GpuExpected,
+    AneUnrotated,
 }
 
 pub struct LinearInputPreparation<B: Backend> {

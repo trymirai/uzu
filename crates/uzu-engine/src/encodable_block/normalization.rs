@@ -43,6 +43,7 @@ pub struct Normalization<B: Backend> {
     input_data_type: DataType,
     output_data_type: DataType,
     kernel: <B::Kernels as Kernels>::NormalizationKernel,
+    unrotated_input_kernel: Option<<B::Kernels as Kernels>::NormalizationKernel>,
 }
 
 impl<B: Backend> Normalization<B> {
@@ -81,6 +82,58 @@ impl<B: Backend> Normalization<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, NormalizationNewError<B>> {
+        Self::new_mixture_with_unrotated_input(
+            mixture_size,
+            element_count,
+            input_data_type,
+            output_data_type,
+            hadamard_factors,
+            shortcut_mode,
+            config,
+            parameter_tree,
+            context,
+            false,
+        )
+        .await
+    }
+
+    pub async fn new_with_unrotated_input(
+        element_count: u32,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        hadamard_factors: Option<InputRhtParameters<B>>,
+        shortcut_mode: ShortcutMode,
+        config: &NormalizationConfig,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, NormalizationNewError<B>> {
+        Self::new_mixture_with_unrotated_input(
+            None,
+            element_count,
+            input_data_type,
+            output_data_type,
+            hadamard_factors,
+            shortcut_mode,
+            config,
+            parameter_tree,
+            context,
+            true,
+        )
+        .await
+    }
+
+    async fn new_mixture_with_unrotated_input(
+        mixture_size: Option<u32>,
+        element_count: u32,
+        input_data_type: DataType,
+        output_data_type: DataType,
+        hadamard_factors: Option<InputRhtParameters<B>>,
+        shortcut_mode: ShortcutMode,
+        config: &NormalizationConfig,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+        allow_unrotated_input: bool,
+    ) -> Result<Self, NormalizationNewError<B>> {
         let (hadamard_size, hadamard_factors) = hadamard_factors.map(|rht| (rht.hadamard_size, rht.signs)).unzip();
         assert!(element_count.is_multiple_of(4), "normalization width ({element_count}) must be a multiple of 4");
         let affine_shape: &[u32] = if let Some(mixture_size) = mixture_size {
@@ -105,23 +158,31 @@ impl<B: Backend> Normalization<B> {
             None
         };
 
-        let kernel = <B::Kernels as Kernels>::NormalizationKernel::new(
-            context,
-            input_data_type,
-            DataType::F32,
-            output_data_type,
-            DataType::F32,
-            false,
-            config.subtract_mean,
-            config.upcast_mode == UpcastMode::FullLayer,
-            copy_to_shortcut,
-            residual_add,
-            hadamard_factors.is_some(),
-            hadamard_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
-            biases.is_some(),
-            scales.is_some(),
-        )
-        .map_err(NormalizationNewError::Backend)?;
+        let build_kernel = |apply_input_rht| {
+            <B::Kernels as Kernels>::NormalizationKernel::new(
+                context,
+                input_data_type,
+                DataType::F32,
+                output_data_type,
+                DataType::F32,
+                false,
+                config.subtract_mean,
+                config.upcast_mode == UpcastMode::FullLayer,
+                copy_to_shortcut,
+                residual_add,
+                apply_input_rht,
+                hadamard_size.unwrap_or(HADAMARD_TRANSFORM_BLOCK_SIZE),
+                biases.is_some(),
+                scales.is_some(),
+            )
+        };
+        let kernel = build_kernel(hadamard_factors.is_some()).map_err(NormalizationNewError::Backend)?;
+
+        let unrotated_input_kernel = if allow_unrotated_input && hadamard_factors.is_some() {
+            Some(build_kernel(false).map_err(NormalizationNewError::Backend)?)
+        } else {
+            None
+        };
 
         Ok(Self {
             epsilon: config.epsilon,
@@ -134,6 +195,7 @@ impl<B: Backend> Normalization<B> {
             input_data_type,
             output_data_type,
             kernel,
+            unrotated_input_kernel,
         })
     }
 
@@ -145,19 +207,36 @@ impl<B: Backend> Normalization<B> {
         shortcut: Option<impl BufferMut<Backend = B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<B::ScratchBuffer, B::Error> {
+        self.encode_with_unrotated_input(input, row_offset, row_count, shortcut, false, command_buffer)
+    }
+
+    pub fn encode_with_unrotated_input(
+        &self,
+        input: impl BufferRef<Backend = B>,
+        row_offset: u32,
+        row_count: u32,
+        shortcut: Option<impl BufferMut<Backend = B>>,
+        unrotated_input: bool,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<B::ScratchBuffer, B::Error> {
         debug_assert!(row_offset.is_multiple_of(self.mixture_size));
         let row_size = size_for_shape(&[self.element_count], self.input_data_type);
         let row_offset_bytes = row_offset as usize * row_size;
         let shortcut = shortcut.map(|shortcut| shortcut.subrange_mut(row_offset_bytes..));
         let mut output =
             command_buffer.allocate_scratch_for_shape(&[row_count, self.element_count], self.output_data_type)?;
-        self.kernel.encode(
+        let (kernel, hadamard_factors) = if unrotated_input && self.hadamard_factors.is_some() {
+            (self.unrotated_input_kernel.as_ref().expect("unrotated input kernel was not configured"), None)
+        } else {
+            (&self.kernel, self.hadamard_factors.as_deref())
+        };
+        kernel.encode(
             Some(input.subrange(row_offset_bytes..)),
             self.scales.as_ref(),
             self.biases.as_ref(),
             &mut output,
             shortcut,
-            self.hadamard_factors.as_deref(),
+            hadamard_factors,
             row_count,
             self.element_count,
             self.epsilon,

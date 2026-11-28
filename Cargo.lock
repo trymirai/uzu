@@ -112,6 +112,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ane"
+version = "0.1.0"
+source = "git+https://github.com/computer-graphics-tools/ane?rev=fc5f226ead18986eb1d6e3d136c1800db425cdfb#fc5f226ead18986eb1d6e3d136c1800db425cdfb"
+dependencies = [
+ "block2",
+ "bytemuck",
+ "half",
+ "libc",
+ "obfstr",
+ "objc2",
+ "objc2-foundation",
+ "objc2-io-surface",
+ "objc2-metal",
+ "plist",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "anes"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10015,6 +10034,7 @@ dependencies = [
 name = "uzu-engine"
 version = "0.7.5"
 dependencies = [
+ "ane",
  "anyhow",
  "ash",
  "async-fs",
@@ -10059,6 +10079,7 @@ dependencies = [
  "shader-slang",
  "shader-slang-sys",
  "shoji",
+ "smallvec",
  "spirv",
  "syn 3.0.10",
  "tempfile",

@@ -42,6 +42,13 @@ impl MetalDenseBuffer {
         })
     }
 
+    pub fn belongs_to(
+        &self,
+        context: &MetalContext,
+    ) -> bool {
+        Arc::ptr_eq(&self.residency_set, &context.residency_set)
+    }
+
     pub(super) fn mtl_buffer(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
         &self.buffer
     }

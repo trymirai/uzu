@@ -21,6 +21,7 @@ metal = [
     "dep:depfile",
     "dep:tempfile",
     "dep:serde_json",
+    "dep:ane",
     "dep:objc2",
     "dep:obfstr",
     "dep:blake3",
@@ -106,10 +107,12 @@ parking_lot.workspace = true
 wgpu = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "visionos"))'.dependencies]
+ane = { workspace = true, optional = true }
 objc2 = { workspace = true, optional = true }
 obfstr = { workspace = true, optional = true }
 xxhash-rust = { workspace = true, features = ["xxh3"], optional = true }
 metal = { workspace = true, optional = true }
+smallvec.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "android"))'.dependencies]
 ash = { workspace = true, optional = true }
