@@ -212,6 +212,8 @@ jobs:
           DMG_APP_PATH="${APP_PATH}" \
           DMG_BACKGROUND="${PWD}/desktop/dmg-background.tiff" \
             "${VENV_DIR}/bin/python" -m dmgbuild -s desktop/dmg-settings.py "${PRODUCT}" "${DMG_TARGET}"
+          # Without a system-made bookmark, Finder on macOS 26 drops the background in Dark Mode.
+          "${VENV_DIR}/bin/python" desktop/dmg-background-bookmark.py "${DMG_TARGET}"
           {
             echo "APP_PATH=${APP_PATH}"
             echo "TARGZ_PATH=${APP_PATH}.tar.gz"
