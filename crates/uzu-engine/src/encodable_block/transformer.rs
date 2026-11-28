@@ -123,6 +123,9 @@ impl<B: Backend> Transformer<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<Self, TransformerNewError<B>> {
+        if transformer_config.layer_order.is_some() {
+            todo!("custom layer order");
+        }
         let residual_config = transformer_config.residual_config.clone();
         let residual_head = ResidualHead::new(
             &residual_config,

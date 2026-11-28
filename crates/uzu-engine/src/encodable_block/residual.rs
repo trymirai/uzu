@@ -276,6 +276,7 @@ impl<B: Backend> ResidualConnection<B> {
             AnyResidualConfig::GatedResidualConfig(config) => {
                 Self::Gated(GatedResidualConnection::new(model_dim, data_type, config, parameter_tree, context).await?)
             },
+            AnyResidualConfig::BlockAttnResConfig(_) => todo!("block attention residuals"),
         })
     }
 
@@ -328,6 +329,7 @@ impl<B: Backend> ResidualHead<B> {
                 expand: <B::Kernels as Kernels>::GatedResidualExpandKernel::new(context, data_type)
                     .map_err(ResidualNewError::Backend)?,
             })),
+            AnyResidualConfig::BlockAttnResConfig(_) => todo!("block attention residuals"),
         }
     }
 

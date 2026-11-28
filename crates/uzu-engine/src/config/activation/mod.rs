@@ -13,6 +13,10 @@ pub struct Activation;
 impl AnyActivation {
     pub fn act_type(&self) -> ActivationType {
         match self {
+            AnyActivation::SiLU(silu::SiLU {
+                soft_cap: Some(_),
+                ..
+            }) => todo!("soft-capped SiLU activation"),
             AnyActivation::SiLU(_) => ActivationType::SILU,
             AnyActivation::GELU(gelu::GELU {
                 approximate: true,

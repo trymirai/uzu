@@ -2,7 +2,7 @@ use uzu_engine_macros::uzu_config;
 
 use crate::config::{linear::LinearConfig, normalization::NormalizationConfig, rope::AnyRoPEConfig};
 
-#[uzu_config]
+#[uzu_config(super::DraftAdapterConfig)]
 pub struct WeaverConfig {
     pub model_dim: u32,
     pub target_model_dim: u32,

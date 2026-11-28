@@ -4,6 +4,7 @@ use crate::config::{
     linear::LinearConfig,
     mlp::AnyMLPConfig,
     normalization::NormalizationConfig,
+    residual::AnyConnectionConfig,
     rope::AnyRoPEConfig,
     stream_op::AnyStreamOpConfig,
     token_mixer::{AnyTokenMixerConfig, convolutions::SeparableCausalConvConfig},
@@ -18,10 +19,18 @@ pub struct TransformerLayerConvConfig {
 }
 
 #[uzu_config]
+pub struct OutputConvConfig {
+    pub conv_config: SeparableCausalConvConfig,
+    pub kernel_size: u32,
+}
+
+#[uzu_config]
 pub struct SublayerConfigCommon {
     pub pre_norm_config: Option<NormalizationConfig>,
     pub conv_config: Option<TransformerLayerConvConfig>,
     pub post_norm_config: Option<NormalizationConfig>,
+    pub connection_config: Option<AnyConnectionConfig>,
+    pub output_conv_config: Option<OutputConvConfig>,
 }
 
 #[uzu_config]
