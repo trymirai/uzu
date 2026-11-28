@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use regex::Regex;
 
 use crate::{
     configs::{ALL_TARGET, Paths, PlatformsConfig},
@@ -77,15 +76,24 @@ impl LanguageBackend for SwiftLanguageBackend {
         if xcframework_path.exists() {
             fs::remove_dir_all(&xcframework_path)?;
         }
-        let slice_libs_with_headers = collect_slice_libs_with_headers(&paths.main_crate, &slices_path)?;
+        let slice_libs_with_headers = targets
+            .iter()
+            .map(|target| {
+                slice_libs_with_headers(
+                    &slices_path.join(&target.name).join(format!("{}.xcframework", paths.main_crate)),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?
+            .concat();
         Command::xcodebuild_create_xcframework(slice_libs_with_headers, xcframework_path.clone()).run()?;
         Command::codesign_adhoc(xcframework_path).run()?;
 
         if generated_sources_path.exists() {
             fs::remove_dir_all(&generated_sources_path)?;
         }
-        let any_slice_path = fs::read_dir(&slices_path)?.next().context("No slices produced")??;
-        let sources_path = any_slice_path.path().join("Sources");
+        // Every slice generates the same sources.
+        let first_target = targets.first().context("No targets to build")?;
+        let sources_path = slices_path.join(&first_target.name).join("Sources");
         fs::create_dir_all(&generated_sources_path)?;
         copy_directory(&sources_path, &generated_sources_path)?;
         generate_swift_extensions(&paths.crates_path(), &extensions_path)?;
@@ -152,36 +160,7 @@ impl LanguageBackend for SwiftLanguageBackend {
         let url = FRAMEWORK_URL_TEMPLATE.replace("{version}", version);
         let replacement = format!("url: \"{url}\",\n            checksum: \"{checksum}\"");
         let body = body.replace("path: \"uzu.xcframework\"", &replacement);
-        let body = body.replace("path: \"Sources/", "path: \"crates/legacy/uzu/bindings/swift/Sources/");
-
-        // Inject `path:` after `dependencies:` so the resulting argument order
-        // matches PackageDescription's Target initializer (name, dependencies, path, ...).
-        let target_paths = [
-            (r"\.target\(", "Uzu", "crates/legacy/uzu/bindings/swift/Sources/Uzu"),
-            (r"\.executableTarget\(", "Examples", "crates/legacy/uzu/bindings/swift/Sources/Examples"),
-            (r"\.testTarget\(", "UzuTests", "crates/legacy/uzu/bindings/swift/Tests/UzuTests"),
-        ];
-        let mut body = body;
-        for (target_kind, name, source_path) in target_paths {
-            let pattern = format!(
-                r#"(?s){}\s*\n(?P<indent>\s*)name:\s*"{}",\s*\n\s*dependencies:\s*\[.*?\](?P<comma>,?)"#,
-                target_kind, name,
-            );
-            let regex = Regex::new(&pattern)?;
-            let captured =
-                regex.captures(&body).with_context(|| format!("Failed to locate target {name} for path injection"))?;
-            let matched = captured.get(0).unwrap().as_str().to_string();
-            let indent = captured.name("indent").context("Missing indent in captured")?.as_str().to_string();
-            let trailing = captured.name("comma").context("Missing comma in captured")?.as_str().to_string();
-            let comma_after_path = if trailing.is_empty() {
-                ""
-            } else {
-                ","
-            };
-            let stripped = matched.strip_suffix(',').unwrap_or(&matched);
-            let replacement = format!("{stripped},\n{indent}path: \"{source_path}\"{comma_after_path}");
-            body = body.replacen(&matched, &replacement, 1);
-        }
+        let body = body.replace("path: \"", "path: \"crates/legacy/uzu/bindings/swift/");
 
         fs::write(paths.root_package_swift_path(), body)?;
 
@@ -189,30 +168,23 @@ impl LanguageBackend for SwiftLanguageBackend {
     }
 }
 
-fn collect_slice_libs_with_headers(
-    name: &str,
-    slices_path: &Path,
-) -> Result<Vec<(PathBuf, PathBuf)>> {
+// The static library and headers of each platform in one target's xcframework.
+fn slice_libs_with_headers(xcframework_path: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
     let mut results = Vec::new();
-    for entry in fs::read_dir(slices_path)? {
-        let entry = entry?;
-        let xcframework_path = entry.path().join(format!("{}.xcframework", name));
-        if !xcframework_path.exists() {
+    for entry in
+        fs::read_dir(xcframework_path).with_context(|| format!("Failed to read {}", xcframework_path.display()))?
+    {
+        let path = entry?.path();
+        if !path.is_dir() {
             continue;
         }
-        for entry in fs::read_dir(&xcframework_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let static_lib_path = find_static_lib(&path)?;
-            let headers_path = find_modulemap_directory(&path.join("Headers"))?;
-            results.push((static_lib_path, headers_path));
-        }
+        let static_lib_path =
+            find_static_lib(&path)?.with_context(|| format!("No static library in {}", path.display()))?;
+        let headers_path = find_modulemap_directory(&path.join("Headers"))?;
+        results.push((static_lib_path, headers_path));
     }
     if results.is_empty() {
-        return Err(anyhow!("No slices produced"));
+        return Err(anyhow!("No platforms in {}", xcframework_path.display()));
     }
     Ok(results)
 }
@@ -231,21 +203,17 @@ fn find_modulemap_directory(headers_path: &Path) -> Result<PathBuf> {
     Err(anyhow!("module.modulemap not found in {}", headers_path.display()))
 }
 
-fn find_static_lib(slice_path: &Path) -> Result<PathBuf> {
-    fn walk(path: &Path) -> Option<PathBuf> {
-        let entries = fs::read_dir(path).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("a") {
-                return Some(path);
-            }
-            if path.is_dir()
-                && let Some(found) = walk(&path)
-            {
-                return Some(found);
-            }
+fn find_static_lib(path: &Path) -> Result<Option<PathBuf>> {
+    for entry in fs::read_dir(path)? {
+        let path = entry?.path();
+        if path.is_file() && path.extension().and_then(|extension| extension.to_str()) == Some("a") {
+            return Ok(Some(path));
         }
-        None
+        if path.is_dir()
+            && let Some(found) = find_static_lib(&path)?
+        {
+            return Ok(Some(found));
+        }
     }
-    walk(slice_path).context("Static lib (.a) not found in the slice")
+    Ok(None)
 }
