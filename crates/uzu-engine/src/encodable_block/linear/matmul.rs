@@ -81,9 +81,7 @@ impl<B: Backend> LinearMatmul<B> {
         context: &B::Context,
     ) -> Result<Self, LinearMatmulError<B>> {
         for data_type in [weights_data_type, input_data_type, output_data_type] {
-            if !matches!(data_type, DataType::BF16 | DataType::F32) {
-                return Err(LinearMatmulError::UnsupportedDataType(data_type));
-            }
+            Self::ensure_data_type_supported(data_type)?;
         }
 
         let matrix =
@@ -109,6 +107,29 @@ impl<B: Backend> LinearMatmul<B> {
             input_dim,
             output_dim,
             output_data_type,
+            prepared_activation_format: ActivationFormat::Bf16,
+        })
+    }
+
+    pub fn from_dense(
+        input_dim: u32,
+        output_dim: u32,
+        data_type: DataType,
+        weights: B::GlobalGpuBuffer,
+        biases: Option<B::GlobalGpuBuffer>,
+        context: &B::Context,
+    ) -> Result<Self, LinearMatmulError<B>> {
+        Self::ensure_data_type_supported(data_type)?;
+        let kernel = <B::Kernels as Kernels>::MatmulKernel::new(context, data_type, data_type, data_type)
+            .map_err(LinearMatmulError::Matmul)?;
+        Ok(Self {
+            kernel: Mutex::new(kernel),
+            matrix: WeightMatrix::dense(weights),
+            biases,
+            output_hadamard_factors: None,
+            input_dim,
+            output_dim,
+            output_data_type: data_type,
             prepared_activation_format: ActivationFormat::Bf16,
         })
     }
@@ -214,6 +235,14 @@ impl<B: Backend> LinearMatmul<B> {
             bias: self.biases.as_ref(),
             rht_factors: self.output_hadamard_factors.as_ref(),
             ..MatmulDOps::none()
+        }
+    }
+
+    fn ensure_data_type_supported(data_type: DataType) -> Result<(), LinearMatmulError<B>> {
+        if matches!(data_type, DataType::BF16 | DataType::F32) {
+            Ok(())
+        } else {
+            Err(LinearMatmulError::UnsupportedDataType(data_type))
         }
     }
 }

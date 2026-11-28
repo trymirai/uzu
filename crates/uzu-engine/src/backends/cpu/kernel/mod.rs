@@ -15,7 +15,6 @@ mod gdn;
 mod linearize_tree;
 mod logit_transform;
 mod matmul;
-mod moe;
 mod normalization;
 mod pooling;
 mod radix_top_k_small;
@@ -23,6 +22,7 @@ mod sampling;
 mod short_conv;
 mod tensor_add_bias;
 mod tensor_add_scale;
+mod vision;
 mod weaver;
 
 include!(concat!(env!("OUT_DIR"), "/cpu.rs"));

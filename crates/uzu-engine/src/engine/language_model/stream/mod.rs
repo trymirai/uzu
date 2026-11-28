@@ -1,9 +1,10 @@
 use derive_more::Debug;
+use shoji::types::session::vision::VisionImage;
 use thiserror::Error;
 
 use crate::{
     backends::common::{Backend, capture_matcher::CaptureError},
-    encodable_block::decoder::DecoderError,
+    encodable_block::{decoder::DecoderError, vision::model::VisionEncodeError},
     engine::language_model::{
         LanguageModel,
         grammar::{Grammar, GrammarError},
@@ -17,6 +18,12 @@ pub use crate::{
 };
 
 mod stream;
+
+#[derive(Clone, Copy)]
+pub enum LanguageModelInput<'a> {
+    Image(&'a VisionImage),
+    Tokens(&'a [u64]),
+}
 
 pub struct LanguageModelStreamOptions {
     pub sampling_method: SamplingMethod,
@@ -42,6 +49,8 @@ pub enum LanguageModelStreamError<B: Backend> {
     NoSeedToken,
     #[error("Context overflow")]
     ContextOverflow,
+    #[error("Vision error: {0}")]
+    Vision(#[from] VisionEncodeError<B>),
 }
 
 impl<B: Backend> LanguageModel<B> {
@@ -56,7 +65,7 @@ impl<B: Backend> LanguageModel<B> {
 
     pub fn stream<'a>(
         &'a self,
-        input: &[u64],
+        input: &[LanguageModelInput<'_>],
         state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<LanguageModelStream<'a, B>, LanguageModelStreamError<B>> {

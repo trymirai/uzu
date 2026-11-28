@@ -19,6 +19,8 @@ pub mod qkv_norm;
 pub mod quantization;
 pub mod quantization_method;
 pub mod ring;
+pub mod rope;
 pub mod trellis;
 pub mod trie;
+pub mod vision;
 pub mod weaver;

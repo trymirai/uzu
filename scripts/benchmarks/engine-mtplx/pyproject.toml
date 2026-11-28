@@ -4,7 +4,7 @@ version = "0.0.1"
 requires-python = ">=3.13.7,<3.15"
 dependencies = [
     "benchmarks-common",
-    "mtplx==2.12.3",
+    "mtplx==2.13.3",
     "typer>=0.27.3",
 ]
 

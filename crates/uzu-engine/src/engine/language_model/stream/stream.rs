@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::executor::block_on;
-use shoji::traits::backend::chat_token::TokenStreamMetrics;
+use shoji::{traits::backend::chat_token::TokenStreamMetrics, types::session::vision::VisionImage};
 
 use crate::{
     backends::common::{
@@ -17,12 +17,18 @@ use crate::{
         kernel::ContextRingUpdateKernel,
     },
     data_type::DataType,
-    encodable_block::{batch_topology::BatchTopology, sampling::SamplingMethod},
+    encodable_block::{
+        batch_topology::BatchTopology,
+        decoder::{DecoderEncodeOutput, DecoderError},
+        mixer::attention::ATTENTION_SUFFIX_CAPACITY,
+        sampling::SamplingMethod,
+        vision::model::VisionEncodeError,
+    },
     engine::language_model::{
         LanguageModel,
         grammar::Grammar,
         state::LanguageModelState,
-        stream::{LanguageModelStreamError, LanguageModelStreamOptions},
+        stream::{LanguageModelInput, LanguageModelStreamError, LanguageModelStreamOptions},
     },
     trie,
     utils::{
@@ -182,21 +188,9 @@ impl<B: Backend> GenerationJob<B> {
 impl<'a, B: Backend> StreamEnqueuer<'a, B> {
     fn new(
         model: &'a LanguageModel<B>,
-        input: &[u64],
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
-        if input.is_empty() {
-            return Err(LanguageModelStreamError::NoSeedToken);
-        };
-
-        if model_state
-            .max_context_length
-            .is_some_and(|max_context_length| model_state.tokens.len() + input.len() > max_context_length as usize)
-        {
-            return Err(LanguageModelStreamError::ContextOverflow);
-        }
-
         let allocation_pool = model.engine.context.create_allocation_pool();
 
         let context_ring = if let Some(suffix_repetition_length) = options.sampling_method.suffix_repetition_length() {
@@ -252,7 +246,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
     pub fn prefill(
         &mut self,
-        input: &[u64],
+        input: &[LanguageModelInput<'_>],
     ) -> Result<GenerationJob<B>, LanguageModelStreamError<B>> {
         let _capture_span = CAPTURE_MATCHER.capture::<B>(&self.model.engine.context, "prefill")?;
         let _span = CpuSpan::start(self.options.timestamps.as_ref(), "prefill");
@@ -260,15 +254,47 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         // NOTE: this is required for attention correctness (hardcoded suffix
         // 1024). This is really bad design, attention should be rewritten to
         // allow on-demand suffix length
-        let max_batch_size = 1024;
-        let number_of_batches = input.len().div_ceil(max_batch_size);
+        let batch_size = ATTENTION_SUFFIX_CAPACITY as usize;
 
+        let mut total_input_length = 0;
+        let mut max_batch_length = 0;
+        let mut number_of_batches = 0;
+        for &part in input {
+            let part_length = match part {
+                LanguageModelInput::Tokens(tokens) => tokens.len(),
+                LanguageModelInput::Image(image) => {
+                    let vision = self.model.vision_model.as_ref().ok_or(VisionEncodeError::<B>::NoVisionEncoder)?;
+                    vision.image_token_count(image).map_err(VisionEncodeError::<B>::from)?
+                },
+            };
+            total_input_length += part_length;
+            max_batch_length = max_batch_length.max(part_length.min(batch_size));
+            number_of_batches += part_length.div_ceil(batch_size);
+        }
+
+        if total_input_length == 0 {
+            return Err(LanguageModelStreamError::NoSeedToken);
+        }
+
+        if self.model_state.max_context_length.is_some_and(|limit| {
+            self.model_state.transformer_state.context_length() as usize + total_input_length > limit as usize
+        }) {
+            return Err(LanguageModelStreamError::ContextOverflow);
+        }
+
+        let mut prefill_parts = input.iter().copied().filter(|part| !matches!(part, LanguageModelInput::Tokens([])));
+        let Some(LanguageModelInput::Tokens(last_tokens)) = prefill_parts.next_back() else {
+            return Err(VisionEncodeError::<B>::ImageAtEnd.into());
+        };
+
+        // Only the last nonempty text chunk supplies logits for sampling.
+        let final_start = (last_tokens.len() - 1) / batch_size * batch_size;
+        let (prefix_tokens, mut final_chunk) = last_tokens.split_at(final_start);
+        let new_context_length =
+            self.model_state.transformer_state.context_length() + (total_input_length - final_chunk.len()) as u32;
         self.model_state
             .transformer_state
-            .prepare(
-                self.model_state.transformer_state.context_length() + ((number_of_batches - 1) * max_batch_size) as u32,
-                usize::min(max_batch_size, input.len()) as u32,
-            )
+            .prepare(new_context_length, max_batch_length as u32)
             .map_err(LanguageModelStreamError::Backend)?;
 
         let command_buffer = self
@@ -282,80 +308,55 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         command_buffer.debug_point(&format!(
             "prefill at context {}, suffix {} ({} batches)",
             self.model_state.transformer_state.context_length(),
-            input.len(),
+            total_input_length,
             number_of_batches
         ));
 
-        let hidden_feature_layer_indices =
-            self.model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices());
-
-        let mut encode_batch = |input_chunk: &[u64], sample: bool| -> Result<_, LanguageModelStreamError<B>> {
-            let token_ids = command_buffer
-                .allocate_constant_from_slice(
-                    &input_chunk.iter().map(|token_id| *token_id as u32).collect::<Box<[u32]>>(),
-                )
-                .map_err(LanguageModelStreamError::Backend)?;
-
-            let batch_dim = BatchTopology::flat(input_chunk.len() as u32);
-
-            let encode_span = CpuSpan::start(self.options.timestamps.as_ref(), "encode layers");
-            let decoder_output = self.model.decoder.encode(
-                &token_ids,
-                &batch_dim,
-                sample.then(|| (input_chunk.len() as u32 - 1..input_chunk.len() as u32).into()),
-                hidden_feature_layer_indices,
-                &mut self.model_state.transformer_state,
-                &mut command_buffer,
-            )?;
-            drop(encode_span);
-
-            self.model_state
-                .transformer_state
-                .encode_accept(&(0..input_chunk.len() as u32).collect::<Box<[u32]>>(), &mut command_buffer)
-                .map_err(LanguageModelStreamError::Backend)?;
-
-            if let Some(speculator) = self.model.speculator.as_ref() {
-                let speculator_state = self.model_state.speculator_state.as_mut().unwrap();
-                speculator.encode_accept(
-                    speculator_state,
-                    decoder_output.hidden_features.as_ref().unwrap().iter(),
-                    &(0..input_chunk.len() as u32).collect::<Box<[u32]>>(),
-                    &mut command_buffer,
-                )?;
+        for part in prefill_parts.chain(once(LanguageModelInput::Tokens(prefix_tokens))) {
+            match part {
+                LanguageModelInput::Tokens(tokens) => {
+                    for chunk in tokens.chunks(batch_size) {
+                        Self::prefill_tokens(
+                            self.model,
+                            self.model_state,
+                            &self.options,
+                            self.context_ring.as_mut(),
+                            chunk,
+                            false,
+                            &mut command_buffer,
+                        )?;
+                    }
+                },
+                LanguageModelInput::Image(image) => {
+                    Self::prefill_image(self.model, self.model_state, &self.options, image, &mut command_buffer)?
+                },
             }
-
-            if !sample && let Some(suffix_repetition_length) = self.options.sampling_method.suffix_repetition_length() {
-                self.model.context_ring_update.encode(
-                    &token_ids,
-                    self.context_ring.as_mut().unwrap(),
-                    suffix_repetition_length,
-                    input_chunk.len() as u32,
-                    &mut command_buffer,
-                );
-            }
-
-            self.model_state.tokens.extend(input_chunk);
-
-            Ok((decoder_output, token_ids, batch_dim))
-        };
-
-        let mut token_chunks = input.chunks(max_batch_size);
-        for input_chunk in token_chunks.by_ref().take(number_of_batches - 1) {
-            encode_batch(input_chunk, false)?;
         }
 
-        // `token_chunks` should have exactly one element left.
-        let final_chunk = token_chunks.next().unwrap();
+        if self.model.decoder.prefill_cache_skips_trailing_layers() && final_chunk.len() > 1 {
+            let (prefix, last) = final_chunk.split_at(final_chunk.len() - 1);
+            Self::prefill_tokens(
+                self.model,
+                self.model_state,
+                &self.options,
+                self.context_ring.as_mut(),
+                prefix,
+                false,
+                &mut command_buffer,
+            )?;
+            final_chunk = last;
+        }
 
-        let split_last_logits_row = self.model.decoder.prefill_cache_skips_trailing_layers();
-        let (decoder_output, token_ids, batch_dim) = if split_last_logits_row && final_chunk.len() > 1 {
-            let (start, end) = final_chunk.split_at(final_chunk.len() - 1);
-            encode_batch(start, false)?;
-            encode_batch(end, true)?
-        } else {
-            encode_batch(final_chunk, true)?
-        };
-
+        let (decoder_output, token_ids) = Self::prefill_tokens(
+            self.model,
+            self.model_state,
+            &self.options,
+            self.context_ring.as_mut(),
+            final_chunk,
+            true,
+            &mut command_buffer,
+        )?;
+        let batch_dim = BatchTopology::flat(final_chunk.len() as u32);
         let logits = decoder_output.logits.unwrap();
 
         let seeds = if matches!(self.options.sampling_method, SamplingMethod::Stochastic { .. }) {
@@ -420,7 +421,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         drop(token_ids);
 
         self.metrics.num_prefill_forward_passes += 1;
-        self.metrics.num_tokens_prefilled += input.len();
+        self.metrics.num_tokens_prefilled += total_input_length;
         self.metrics.num_tokens_proposed += 1;
 
         Ok(GenerationJob::Pending {
@@ -706,7 +707,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         if batch_dim.full_accept() {
             self.model_state
                 .transformer_state
-                .encode_accept(&(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut command_buffer)
+                .encode_accept(&batch_dim, &(0..batch_dim.size()).collect::<Box<[u32]>>(), &mut command_buffer)
                 .map_err(LanguageModelStreamError::Backend)?;
 
             if let Some(speculator) = self.model.speculator.as_ref() {
@@ -782,7 +783,7 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         self.model_state
             .transformer_state
-            .encode_accept(accepted_token_indices, &mut command_buffer)
+            .encode_accept(batch_dim, accepted_token_indices, &mut command_buffer)
             .map_err(LanguageModelStreamError::Backend)?;
 
         if let Some(speculator) = self.model.speculator.as_ref() {
@@ -817,16 +818,122 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
 
         Ok(Some(pending))
     }
+
+    fn prefill_tokens(
+        model: &LanguageModel<B>,
+        model_state: &mut LanguageModelState<B>,
+        options: &LanguageModelStreamOptions,
+        context_ring: Option<&mut B::GlobalGpuBuffer>,
+        tokens: &[u64],
+        sample: bool,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(DecoderEncodeOutput<B>, B::ConstantBuffer), LanguageModelStreamError<B>> {
+        let row_count = tokens.len() as u32;
+
+        let encode_span = CpuSpan::start(options.timestamps.as_ref(), "encode layers");
+        let token_ids = command_buffer
+            .allocate_constant_from_slice(&tokens.iter().map(|&id| id as u32).collect::<Box<[_]>>())
+            .map_err(LanguageModelStreamError::Backend)?;
+        let batch_dim = BatchTopology::flat(row_count);
+        let output = model.decoder.encode(
+            &token_ids,
+            &batch_dim,
+            sample.then(|| (row_count - 1..row_count).into()),
+            model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
+            &mut model_state.transformer_state,
+            command_buffer,
+        )?;
+        drop(encode_span);
+
+        Self::accept_prefill(model, model_state, &batch_dim, output.hidden_features.as_deref(), command_buffer)?;
+        model_state.tokens.extend_from_slice(tokens);
+
+        if !sample && let Some(length) = options.sampling_method.suffix_repetition_length() {
+            model.context_ring_update.encode(&token_ids, context_ring.unwrap(), length, row_count, command_buffer);
+        }
+
+        Ok((output, token_ids))
+    }
+
+    fn prefill_image(
+        model: &LanguageModel<B>,
+        model_state: &mut LanguageModelState<B>,
+        options: &LanguageModelStreamOptions,
+        image: &VisionImage,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), LanguageModelStreamError<B>> {
+        let vision_model = model.vision_model.as_ref().ok_or(VisionEncodeError::<B>::NoVisionEncoder)?;
+
+        let encode_span = CpuSpan::start(options.timestamps.as_ref(), "vision encode");
+        let image = vision_model.encode(image, command_buffer)?;
+        drop(encode_span);
+
+        let row_count = image.grid.cell_count();
+        let row_size = image.embeddings.size() / row_count as usize;
+        for start in (0..row_count).step_by(ATTENTION_SUFFIX_CAPACITY as usize) {
+            let length = (row_count - start).min(ATTENTION_SUFFIX_CAPACITY);
+
+            let encode_span = CpuSpan::start(options.timestamps.as_ref(), "encode layers");
+            let mut embedded = command_buffer
+                .allocate_scratch(length as usize * row_size)
+                .map_err(LanguageModelStreamError::Backend)?;
+            command_buffer.encode_copy(
+                image.embeddings.subrange(start as usize * row_size..(start + length) as usize * row_size),
+                &mut embedded,
+            );
+            let batch_dim = BatchTopology::image(image.grid, start..start + length);
+            let output = model
+                .decoder
+                .transformer()
+                .encode(
+                    embedded,
+                    None::<&B::ScratchBuffer>,
+                    &batch_dim,
+                    None,
+                    model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
+                    Some(&mut model_state.transformer_state),
+                    command_buffer,
+                )
+                .map_err(DecoderError::from)?;
+            drop(encode_span);
+
+            Self::accept_prefill(model, model_state, &batch_dim, output.hidden_features.as_deref(), command_buffer)?;
+        }
+        Ok(())
+    }
+
+    fn accept_prefill(
+        model: &LanguageModel<B>,
+        model_state: &mut LanguageModelState<B>,
+        batch_dim: &BatchTopology<B>,
+        hidden_features: Option<&[B::ScratchBuffer]>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<(), LanguageModelStreamError<B>> {
+        let rows = (0..batch_dim.size()).collect::<Box<[_]>>();
+        model_state
+            .transformer_state
+            .encode_accept(batch_dim, &rows, command_buffer)
+            .map_err(LanguageModelStreamError::Backend)?;
+        if let Some(speculator) = model.speculator.as_ref() {
+            speculator.encode_accept(
+                model_state.speculator_state.as_mut().unwrap(),
+                hidden_features.expect("speculator requires hidden features").iter(),
+                &rows,
+                command_buffer,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 impl<'a, B: Backend> LanguageModelStream<'a, B> {
     pub fn new(
         model: &'a LanguageModel<B>,
-        input: &[u64],
+        input: &[LanguageModelInput<'_>],
         model_state: &'a mut LanguageModelState<B>,
         options: LanguageModelStreamOptions,
     ) -> Result<Self, LanguageModelStreamError<B>> {
-        let mut submitter = StreamEnqueuer::new(model, input, model_state, options)?;
+        let mut submitter = StreamEnqueuer::new(model, model_state, options)?;
         let job = submitter.prefill(input)?;
 
         Ok(Self {

@@ -4,7 +4,10 @@ use thiserror::Error;
 use crate::{
     backends::common::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
-        gpu_types::qkv_norm::{QKVL2Op, QKVNormParams},
+        gpu_types::{
+            qkv_norm::{QKVL2Op, QKVNormParams},
+            rope::RoPEKind,
+        },
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
             attention::KeyBlocks,
@@ -13,9 +16,12 @@ use crate::{
     config::{normalization::UpcastMode, rope::AnyRoPEConfig, token_mixer::attention::AttentionConfig},
     data_type::DataType,
     encodable_block::{
-        batch_topology::BatchTopology,
+        batch_topology::{BatchKind, BatchTopology},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::RoPE},
+        mixer::{
+            Mixer, MixerEncodeError, MixerState,
+            attention::rope::{RoPE, RoPEAxes},
+        },
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -78,6 +84,43 @@ impl<B: Backend> Attention<B> {
         parameter_tree: &ParameterTree<'_, B>,
         context: &B::Context,
     ) -> Result<(Self, Option<InputRhtParameters<B>>), AttentionNewError<B>> {
+        let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
+            hidden_dim,
+            config.qkvg_head_count() * config.head_dim,
+            data_type,
+            config.has_qkvg_biases,
+            &parameter_tree.subtree("qkvg_projection"),
+            context,
+        )
+        .await?;
+        let out_projection = <dyn Linear<B>>::new(
+            config.num_heads * config.head_dim,
+            hidden_dim,
+            data_type,
+            config.has_out_biases,
+            &parameter_tree.subtree("out_projection"),
+            context,
+        )
+        .await?;
+        let rope = rope_config
+            .map(|rope_config| RoPE::new(rope_config, context))
+            .transpose()
+            .map_err(AttentionNewError::Backend)?;
+        let attention =
+            Self::with_projections(data_type, rope, config, projection, out_projection, parameter_tree, context)
+                .await?;
+        Ok((attention, in_projection_input_hadamard_factors))
+    }
+
+    pub async fn with_projections(
+        data_type: DataType,
+        rope: Option<RoPE<B>>,
+        config: &AttentionConfig,
+        projection: Box<dyn Linear<B>>,
+        out_projection: Box<dyn Linear<B>>,
+        parameter_tree: &ParameterTree<'_, B>,
+        context: &B::Context,
+    ) -> Result<Self, AttentionNewError<B>> {
         let is_kv_sharing = config.is_kv_sharing;
 
         let head_dim = config.head_dim;
@@ -87,34 +130,6 @@ impl<B: Backend> Attention<B> {
 
         let is_causal = config.is_causal;
         let sliding_window_size = config.sliding_window_size;
-        let rope = rope_config
-            .map(|rope_config| RoPE::new(rope_config, context))
-            .transpose()
-            .map_err(AttentionNewError::Backend)?;
-
-        let q_dim = num_q_heads * head_dim;
-
-        let projection_tree = parameter_tree.subtree("qkvg_projection");
-        let qkv_dim = if let Some(num_kv_heads) = num_kv_heads {
-            let kv_dim = num_kv_heads * head_dim;
-            q_dim + kv_dim + kv_dim
-        } else {
-            q_dim
-        };
-        let projection_dim = if config.has_gate {
-            qkv_dim + q_dim
-        } else {
-            qkv_dim
-        };
-        let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
-            hidden_dim,
-            projection_dim,
-            data_type,
-            config.has_qkvg_biases,
-            &projection_tree,
-            context,
-        )
-        .await?;
 
         let query_norm_config = config.query_norm_config.clone();
         // TODO: Fix lalamo config, those two must be None if kv sharing.
@@ -150,6 +165,7 @@ impl<B: Backend> Attention<B> {
         let ring_capacity = sliding_window_size;
         let is_kv_cache_ring = ring_capacity.is_some();
 
+        let projection_dim = config.qkvg_head_count() * config.head_dim;
         let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
             AttentionKernelConfig {
@@ -167,71 +183,48 @@ impl<B: Backend> Attention<B> {
             },
         )
         .map_err(AttentionNewError::Kernel)?;
-        let prepare = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
-            context,
-            data_type,
-            head_dim,
-            rope_config.is_some(),
-            num_groups,
-            kernel.kv_layout().backend_opaque_layout,
-            !is_kv_sharing,
-            qkv_norm_scales[0].is_some(),
-            qkv_norm_scales[1].is_some(),
-            qkv_norm_scales[2].is_some(),
-            false,
-            0,
-            false,
-        )
-        .map_err(AttentionNewError::Backend)?;
-        let prepare_trie = <B::Kernels as Kernels>::AttentionPrepareKernel::new(
-            context,
-            data_type,
-            head_dim,
-            rope_config.is_some(),
-            num_groups,
-            kernel.kv_layout().backend_opaque_layout,
-            !is_kv_sharing,
-            qkv_norm_scales[0].is_some(),
-            qkv_norm_scales[1].is_some(),
-            qkv_norm_scales[2].is_some(),
-            false,
-            0,
-            true,
-        )
-        .map_err(AttentionNewError::Backend)?;
 
-        let out_projection = <dyn Linear<B>>::new(
-            q_dim,
-            hidden_dim,
-            data_type,
-            config.has_out_biases,
-            &parameter_tree.subtree("out_projection"),
-            context,
-        )
-        .await?;
-
-        Ok((
-            Self {
-                head_dim,
-                num_q_heads,
-                num_groups,
-                num_kv_heads,
-                ring_capacity,
-                rope,
+        let rope_kind = rope.as_ref().map_or(RoPEKind::None, RoPE::kind);
+        let new_prepare = |has_trie: bool| {
+            <B::Kernels as Kernels>::AttentionPrepareKernel::new(
+                context,
                 data_type,
-                has_gate: config.has_gate,
-                projection_dim,
-                projection,
-                qkv_norm_params,
-                qkv_norm_scales,
-                prepare,
-                prepare_trie,
-                sinks,
-                kernel,
-                out_projection,
-            },
-            in_projection_input_hadamard_factors,
-        ))
+                head_dim,
+                rope_kind,
+                num_groups,
+                kernel.kv_layout().backend_opaque_layout,
+                !is_kv_sharing,
+                qkv_norm_scales[0].is_some(),
+                qkv_norm_scales[1].is_some(),
+                qkv_norm_scales[2].is_some(),
+                false,
+                0,
+                has_trie,
+            )
+            .map_err(AttentionNewError::Backend)
+        };
+        let prepare = new_prepare(false)?;
+        let prepare_trie = new_prepare(true)?;
+
+        Ok(Self {
+            head_dim,
+            num_q_heads,
+            num_groups,
+            num_kv_heads,
+            ring_capacity,
+            rope,
+            data_type,
+            has_gate: config.has_gate,
+            projection_dim,
+            projection,
+            qkv_norm_params,
+            qkv_norm_scales,
+            prepare,
+            prepare_trie,
+            sinks,
+            kernel,
+            out_projection,
+        })
     }
 
     fn attend(
@@ -264,9 +257,19 @@ impl<B: Backend> Attention<B> {
                     (MaybeMut::Mut(&mut scratch_kv), KVCacheState::new(0, self.ring_capacity))
                 },
             };
+
             let trie = batch_dim.nodes();
             let (queries, query_scales) = self
-                .prepare(&qkvg, &mut kv, cache, self.num_q_heads, batch_dim.size(), trie, command_buffer)
+                .prepare(
+                    &qkvg,
+                    &mut kv,
+                    cache,
+                    batch_dim.kind(),
+                    self.num_q_heads,
+                    batch_dim.size(),
+                    trie,
+                    command_buffer,
+                )
                 .map_err(AttentionEncodeError::Backend)?;
             let input = AttentionInput {
                 query_codes: &queries,
@@ -303,8 +306,10 @@ impl<B: Backend> Attention<B> {
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
         let cache = state.cache();
-        self.prepare(key_value, &mut MaybeMut::Mut(&mut state.kv), cache, 0, batch_dim, None, command_buffer)?;
-        state.encode_accept(&(0..batch_dim).collect::<Box<[u32]>>(), command_buffer)?;
+        let batch_dim = BatchTopology::flat(batch_dim);
+        let kv = &mut MaybeMut::Mut(&mut state.kv);
+        self.prepare(key_value, kv, cache, batch_dim.kind(), 0, batch_dim.size(), None, command_buffer)?;
+        state.encode_accept(&batch_dim, &(0..batch_dim.size()).collect::<Box<[u32]>>(), command_buffer)?;
         Ok(())
     }
 
@@ -313,6 +318,7 @@ impl<B: Backend> Attention<B> {
         qkvg: impl BufferRef<Backend = B>,
         kv: &mut MaybeMut<'_, KVCache<B>>,
         cache: KVCacheState,
+        batch_kind: &BatchKind<B>,
         num_q_heads: u32,
         suffix_length: u32,
         trie: Option<&B::GlobalGpuBuffer>,
@@ -343,6 +349,12 @@ impl<B: Backend> Attention<B> {
         } else {
             &self.prepare
         };
+
+        let rope_grid_params = rope.and_then(|rope| rope.grid_params(batch_kind));
+        let rope_position_offset = rope.map(|rope| match rope.axes {
+            RoPEAxes::Sequential => cache.context_length(),
+            _ => cache.rope_position(),
+        });
         prepare.encode(
             qkvg,
             &mut query_codes,
@@ -362,7 +374,8 @@ impl<B: Backend> Attention<B> {
             num_q_heads,
             rope.map(|rope| rope.dim),
             rope.map(|rope| rope.scale),
-            rope.map(|_| cache.context_length()),
+            rope_position_offset,
+            rope_grid_params,
             cache.prefix_len(),
             input_row_stride,
             suffix_length,

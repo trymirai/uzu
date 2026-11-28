@@ -65,6 +65,7 @@ impl<B: Backend> MixerState<B> for DeltaNetState<B> {
 
     fn encode_accept(
         &mut self,
+        _batch_dim: &BatchTopology<B>,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {

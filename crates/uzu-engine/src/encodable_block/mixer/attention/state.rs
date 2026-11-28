@@ -6,7 +6,10 @@ use crate::{
         gpu_types::{kv_cache_update::Copy, ring::RingParams},
         kernel::{AttentionKernel, KVCacheUpdateKernel, kv_layout::KVLayout},
     },
-    encodable_block::mixer::{Mixer, MixerState, attention::Attention},
+    encodable_block::{
+        batch_topology::BatchTopology,
+        mixer::{Mixer, MixerState, attention::Attention},
+    },
 };
 
 pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffix capacity
@@ -15,6 +18,7 @@ pub const ATTENTION_SUFFIX_CAPACITY: u32 = 1024; // TODO: remove hardcoded suffi
 pub struct KVCacheState {
     context_length: u32,
     ring_capacity: Option<u32>,
+    rope_position: u32,
 }
 
 impl KVCacheState {
@@ -26,11 +30,16 @@ impl KVCacheState {
         Self {
             context_length,
             ring_capacity,
+            rope_position: context_length,
         }
     }
 
     pub fn context_length(self) -> u32 {
         self.context_length
+    }
+
+    pub fn rope_position(self) -> u32 {
+        self.rope_position
     }
 
     pub fn prefix_len(self) -> u32 {
@@ -56,6 +65,7 @@ impl KVCacheState {
     fn accept(
         &mut self,
         accepted_indices: &[u32],
+        rope_advance: u32,
     ) -> Vec<Copy> {
         assert!(accepted_indices.is_sorted_by(|a, b| a < b), "unsorted accept");
         let suffix_base = self.prefix_len();
@@ -76,6 +86,8 @@ impl KVCacheState {
             }
             self.context_length += 1;
         }
+
+        self.rope_position += rope_advance;
         copies
     }
 }
@@ -197,10 +209,12 @@ impl<B: Backend> MixerState<B> for AttentionState<B> {
 
     fn encode_accept(
         &mut self,
+        batch_dim: &BatchTopology<B>,
         accepted_indices: &[u32],
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<(), B::Error> {
-        let copies = self.cache.accept(accepted_indices);
+        let rope_advance = batch_dim.position_advance(accepted_indices.len() as u32);
+        let copies = self.cache.accept(accepted_indices, rope_advance);
         assert!(
             copies
                 .iter()

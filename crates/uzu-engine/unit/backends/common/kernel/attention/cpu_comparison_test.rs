@@ -7,7 +7,7 @@ use crate::{
     backends::{
         common::{
             Backend, BufferRef, CommandBufferEncoding, Context, Kernels,
-            gpu_types::trie::TrieNode,
+            gpu_types::{rope::RoPEKind, trie::TrieNode},
             kernel::{
                 AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
                 attention::KeyBlocks,
@@ -74,7 +74,7 @@ fn run<B: Backend, T: DataTypeRepr>(
             &context,
             config.data_type,
             dim,
-            false,
+            RoPEKind::None,
             config.num_groups,
             kernel.kv_layout().backend_opaque_layout,
             true,
@@ -103,6 +103,7 @@ fn run<B: Backend, T: DataTypeRepr>(
             None::<&mut B::GlobalGpuBuffer>,
             Default::default(),
             heads,
+            None,
             None,
             None,
             None,

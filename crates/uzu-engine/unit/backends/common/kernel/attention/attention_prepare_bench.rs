@@ -9,7 +9,10 @@ use crate::{
     backends::{
         common::{
             Backend, Kernels,
-            gpu_types::qkv_norm::{QKVL2Op, QKVNormParams},
+            gpu_types::{
+                qkv_norm::{QKVL2Op, QKVNormParams},
+                rope::RoPEKind,
+            },
             kernel::AttentionPrepareKernel,
         },
         metal::Metal,
@@ -43,7 +46,7 @@ fn bench_attention_prepare(c: &mut Criterion) {
         &context,
         DataType::BF16,
         HEAD_DIM,
-        true,
+        RoPEKind::Sequential,
         NUM_KV_HEADS,
         layout.backend_opaque_layout,
         true,
@@ -115,6 +118,7 @@ fn bench_attention_prepare(c: &mut Criterion) {
                         Some(HEAD_DIM),
                         Some(1.0),
                         Some(PREFIX_TOKENS),
+                        None,
                         PREFIX_TOKENS,
                         input_row_stride,
                         suffix_length,

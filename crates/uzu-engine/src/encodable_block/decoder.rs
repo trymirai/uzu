@@ -135,6 +135,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.prefill_cache_skips_trailing_layers()
     }
 
+    pub fn transformer(&self) -> &Transformer<B> {
+        &self.transformer
+    }
+
     pub fn create_empty_state(
         &self,
         max_context_length: Option<u32>,

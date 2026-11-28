@@ -1,13 +1,31 @@
 use crate::{
-    backends::common::{Backend, Context, CpuBuffer, GlobalBufferCpuGpu},
+    backends::common::{
+        Backend, Context, CpuBuffer, GlobalBufferCpuGpu,
+        gpu_types::rope::{RoPEGridParams, RoPEKind},
+    },
     config::rope::AnyRoPEConfig,
+    encodable_block::{batch_topology::BatchKind, cell_grid::CellGrid},
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoPEAxes {
+    Sequential,
+    ContiguousGrid {
+        height_pairs: u32,
+        width_pairs: u32,
+    },
+    InterleavedGrid {
+        height_pairs: u32,
+        width_pairs: u32,
+    },
+}
 
 pub struct RoPE<B: Backend> {
     pub inverse_frequencies: B::GlobalGpuBuffer,
     pub scale: f32,
     pub dim: u32,
     pub max_sequence_length: u32,
+    pub axes: RoPEAxes,
 }
 
 impl<B: Backend> RoPE<B> {
@@ -31,7 +49,7 @@ impl<B: Backend> RoPE<B> {
             let channel_index = pair_index * 2;
             let inverse_frequency = 1.0 / rope_config.base().powf(channel_index as f32 / head_dim as f32);
             let inverse_frequency = match rope_config {
-                AnyRoPEConfig::UnscaledRoPEConfig(_) => inverse_frequency,
+                AnyRoPEConfig::UnscaledRoPEConfig(_) | AnyRoPEConfig::MultimodalRoPEConfig(_) => inverse_frequency,
                 AnyRoPEConfig::LinearScalingRoPEConfig(config) => inverse_frequency / config.scaling_factor,
                 AnyRoPEConfig::LlamaRoPEConfig(config) => {
                     let low_frequency_wavelength = config.original_context_length as f32 / config.low_frequency_factor;
@@ -89,13 +107,88 @@ impl<B: Backend> RoPE<B> {
             inverse_frequencies.push(inverse_frequency);
         }
 
-        let mut buffer = context.create_buffer_cpu_gpu(size_of_val(inverse_frequencies.as_slice()))?;
-        buffer.copyin(&inverse_frequencies);
+        Ok(Self {
+            axes: match rope_config {
+                AnyRoPEConfig::MultimodalRoPEConfig(config) => {
+                    let [_, height_pairs, width_pairs] = config.frequency_pairs_per_axis;
+                    RoPEAxes::InterleavedGrid {
+                        height_pairs,
+                        width_pairs,
+                    }
+                },
+                _ => RoPEAxes::Sequential,
+            },
+            ..Self::from_inverse_frequencies(
+                &inverse_frequencies,
+                scale,
+                head_dim,
+                *rope_config.max_sequence_length(),
+                context,
+            )?
+        })
+    }
+
+    /// `inverse_frequencies` has one frequency per pair of the `dim` rotated channels
+    pub fn from_inverse_frequencies(
+        inverse_frequencies: &[f32],
+        scale: f32,
+        dim: u32,
+        max_sequence_length: u32,
+        context: &B::Context,
+    ) -> Result<Self, B::Error> {
+        assert_eq!(inverse_frequencies.len(), (dim / 2) as usize, "RoPE takes a frequency per channel pair");
+        let mut buffer = context.create_buffer_cpu_gpu(size_of_val(inverse_frequencies))?;
+        buffer.copyin(inverse_frequencies);
         Ok(Self {
             inverse_frequencies: buffer.handoff()?,
             scale,
-            dim: head_dim,
-            max_sequence_length: *rope_config.max_sequence_length(),
+            dim,
+            max_sequence_length,
+            axes: RoPEAxes::Sequential,
+        })
+    }
+
+    pub fn kind(&self) -> RoPEKind {
+        match self.axes {
+            RoPEAxes::Sequential => RoPEKind::Sequential,
+            RoPEAxes::ContiguousGrid {
+                ..
+            } => RoPEKind::ContiguousGrid,
+            RoPEAxes::InterleavedGrid {
+                ..
+            } => RoPEKind::InterleavedGrid,
+        }
+    }
+
+    pub fn grid_params(
+        &self,
+        batch_kind: &BatchKind<B>,
+    ) -> Option<RoPEGridParams> {
+        let (RoPEAxes::ContiguousGrid {
+            height_pairs,
+            width_pairs,
+        }
+        | RoPEAxes::InterleavedGrid {
+            height_pairs,
+            width_pairs,
+        }) = self.axes
+        else {
+            return None;
+        };
+        let (grid, first_cell) = match batch_kind {
+            &BatchKind::Image {
+                grid,
+                first_cell,
+            } => (grid, first_cell),
+            _ => (CellGrid::new(1, 1, 1), 0),
+        };
+        Some(RoPEGridParams {
+            grid_width: grid.width,
+            grid_height: grid.height,
+            first_cell,
+            height_pairs,
+            width_pairs,
+            merge_size: grid.merge_size,
         })
     }
 }
