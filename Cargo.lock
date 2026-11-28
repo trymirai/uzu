@@ -9953,7 +9953,6 @@ dependencies = [
 name = "uzu"
 version = "0.7.5"
 dependencies = [
- "anyhow",
  "async-openai",
  "backend-remote",
  "bindings",
@@ -10031,6 +10030,7 @@ dependencies = [
  "is_close",
  "itertools 0.15.0",
  "keisoku",
+ "libc",
  "libm",
  "libtest-mimic",
  "monostate 1.0.3",

@@ -9,6 +9,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
+        embedding_table_disk::{self, SharedFiles},
         linear::InputRhtParameters,
         mixer::MixerState,
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
@@ -37,6 +38,22 @@ pub struct TransformerState<B: Backend> {
 pub struct TransformerEncodeOutput<B: Backend> {
     pub output: Option<B::ScratchBuffer>,
     pub hidden_features: Option<Box<[B::ScratchBuffer]>>,
+}
+
+/// See [`Transformer::begin`].
+pub struct TransformerPass<B: Backend> {
+    stream: B::ScratchBuffer,
+    hidden_features: Option<Vec<Option<B::ScratchBuffer>>>,
+    hidden_feature_layer_indices: Option<Box<[u32]>>,
+    output_range: Option<Range<u32>>,
+    layer_count: usize,
+    next_layer: usize,
+}
+
+impl<B: Backend> TransformerPass<B> {
+    pub fn output_range(&self) -> Option<Range<u32>> {
+        self.output_range
+    }
 }
 
 impl<B: Backend> TransformerState<B> {
@@ -140,6 +157,7 @@ impl<B: Backend> Transformer<B> {
 
         let num_layers = transformer_config.layer_configs.len() as u32;
         let mut layers = Vec::with_capacity(num_layers as usize);
+        let mut files = SharedFiles::default();
         for (layer_config, layer_index) in transformer_config.layer_configs.iter().zip(0u32..) {
             let layer_loader = parameter_tree.subtree(&format!("layers.{}", layer_index));
 
@@ -152,6 +170,7 @@ impl<B: Backend> Transformer<B> {
                 layer_config,
                 &residual_config,
                 &layer_loader,
+                &mut files,
                 context,
             )
             .await?;
@@ -255,6 +274,7 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
+    /// Encodes a full pass. Needs `state` to have been populated by [`Self::prepare_ngram_rows`].
     pub fn encode(
         &self,
         input: B::ScratchBuffer,
@@ -262,14 +282,27 @@ impl<B: Backend> Transformer<B> {
         batch_dim: &BatchTopology<B>,
         output_range: Option<Range<u32>>,
         hidden_feature_layer_indices: Option<&[u32]>,
-        mut state: Option<&mut TransformerState<B>>,
+        state: Option<&mut TransformerState<B>>,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
+        let pass = self.begin(input, batch_dim, output_range, hidden_feature_layer_indices, command_buffer)?;
+        self.finish(pass, per_layer_inputs, batch_dim, state, command_buffer)
+    }
+
+    /// Starts a pass. See [`Self::encode_layers`] and [`Self::finish`].
+    pub fn begin(
+        &self,
+        input: B::ScratchBuffer,
+        batch_dim: &BatchTopology<B>,
+        output_range: Option<Range<u32>>,
+        hidden_feature_layer_indices: Option<&[u32]>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerPass<B>, TransformerEncodeError<B>> {
         if hidden_feature_layer_indices.is_some() && !matches!(self.residual_head, ResidualHead::Additive) {
             return Err(TransformerEncodeError::HiddenFeaturesRequireAdditiveResidual);
         }
 
-        let mut stream = self
+        let stream = self
             .residual_head
             .expand(input, batch_dim.size(), command_buffer)
             .map_err(TransformerEncodeError::Backend)?;
@@ -279,10 +312,41 @@ impl<B: Backend> Transformer<B> {
             self.layers.len()
         };
 
-        let mut hidden_features =
+        let hidden_features =
             hidden_feature_layer_indices.map(|indices| (0..indices.len()).map(|_| None).collect::<Vec<_>>());
 
-        for layer in self.layers.iter().take(layer_count) {
+        Ok(TransformerPass {
+            stream,
+            hidden_features,
+            hidden_feature_layer_indices: hidden_feature_layer_indices.map(Box::from),
+            output_range,
+            layer_count,
+            next_layer: 0,
+        })
+    }
+
+    /// Encodes up to the specified layer.
+    pub fn encode_layers(
+        &self,
+        pass: TransformerPass<B>,
+        until: usize,
+        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        batch_dim: &BatchTopology<B>,
+        mut state: Option<&mut TransformerState<B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerPass<B>, TransformerEncodeError<B>> {
+        let TransformerPass {
+            mut stream,
+            mut hidden_features,
+            hidden_feature_layer_indices,
+            output_range,
+            layer_count,
+            next_layer,
+        } = pass;
+        let until = usize::min(until, layer_count);
+        assert!(until >= next_layer, "transformer layers {until}..{next_layer} were already encoded");
+
+        for layer in &self.layers[next_layer..until] {
             let layer_state = state.as_deref_mut().map(|state| {
                 let layer_index = layer.layer_index as usize;
                 if let LayerMixerState::Shared(owner_index) = state.layer_states[layer_index].mixer {
@@ -306,7 +370,7 @@ impl<B: Backend> Transformer<B> {
 
             stream = layer.encode(stream, per_layer_inputs, batch_dim, layer_state, command_buffer)?;
 
-            if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, hidden_feature_layer_indices) {
+            if let (Some(hidden_features), Some(indices)) = (&mut hidden_features, &hidden_feature_layer_indices) {
                 for (feature_index, &layer_index) in indices.iter().enumerate() {
                     if layer_index == layer.layer_index {
                         let feature = self
@@ -317,6 +381,35 @@ impl<B: Backend> Transformer<B> {
                 }
             }
         }
+
+        Ok(TransformerPass {
+            stream,
+            hidden_features,
+            hidden_feature_layer_indices,
+            output_range,
+            layer_count,
+            next_layer: until,
+        })
+    }
+
+    /// Encodes all remaining layers, see [`Self::encode_layers`]
+    pub fn finish(
+        &self,
+        pass: TransformerPass<B>,
+        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
+        batch_dim: &BatchTopology<B>,
+        state: Option<&mut TransformerState<B>>,
+        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
+    ) -> Result<TransformerEncodeOutput<B>, TransformerEncodeError<B>> {
+        let layer_count = pass.layer_count;
+        let TransformerPass {
+            stream,
+            hidden_features,
+            hidden_feature_layer_indices,
+            output_range,
+            ..
+        } = self.encode_layers(pass, layer_count, per_layer_inputs, batch_dim, state, command_buffer)?;
+        let hidden_feature_layer_indices = hidden_feature_layer_indices.as_deref();
 
         let hidden_features = hidden_features.map(|hidden_features| {
             hidden_features
@@ -367,8 +460,12 @@ impl<B: Backend> Transformer<B> {
         })
     }
 
+    pub fn first_ngram_layer_index(&self) -> Option<usize> {
+        self.layers.iter().position(|layer| layer.has_ngram_embeddings())
+    }
+
     pub fn has_ngram_embeddings(&self) -> bool {
-        self.layers.iter().any(|layer| layer.has_ngram_embeddings())
+        self.first_ngram_layer_index().is_some()
     }
 
     pub fn prepare_ngram_rows(
@@ -377,13 +474,22 @@ impl<B: Backend> Transformer<B> {
         token_ids: &[u32],
         parents: Option<&[i32]>,
     ) -> std::io::Result<()> {
-        for (op, op_state) in self
-            .layers
+        let mut injections = Vec::new();
+        for (layer, layer_state) in self.layers.iter().zip(&mut state.layer_states) {
+            injections.extend(layer.ngram_injections(&mut layer_state.stream_ops));
+        }
+
+        let lookups = injections
             .iter()
-            .zip(state.layer_states.iter_mut())
-            .flat_map(|(layer, layer_state)| layer.ngram_injections(&mut layer_state.stream_ops))
-        {
-            op.prepare(op_state, token_ids, parents)?;
+            .map(|(op, op_state)| (op.ngram_embedding(), op.ngram_ids(op_state, token_ids, parents)))
+            .collect::<Vec<_>>();
+
+        // TODO(perf): currently we have at most one ngam layer per model, but if we had more we should start
+        // working on earlier layers while waiting for the rest of the lookups to resolve.
+        let rows = embedding_table_disk::lookup(&lookups)?;
+
+        for ((op, op_state), row) in injections.into_iter().zip(rows) {
+            op.prepare(op_state, token_ids, row);
         }
         Ok(())
     }

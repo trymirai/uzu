@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use derive_more::Debug;
-use futures::future::try_join_all;
 use thiserror::Error;
 
 use crate::{
@@ -14,6 +13,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         convolution::{ConvolutionNewError, SeparableCausalConv},
+        embedding_table_disk::SharedFiles,
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{Mixer, MixerEncodeError, MixerNewError, MixerState},
         mlp::{Mlp, MlpBlockNewError, MlpEncodeError},
@@ -360,39 +360,48 @@ impl<B: Backend> TransformerLayer<B> {
         layer_config: &TransformerLayerConfig,
         residual_config: &AnyResidualConfig,
         parameter_tree: &ParameterTree<'_, B>,
+        files: &mut SharedFiles,
         context: &B::Context,
     ) -> Result<Self, TransformerLayerError<B>> {
         let prologue_params = parameter_tree.subtree("prologue");
-        let prologue = try_join_all(layer_config.prologue_configs.iter().enumerate().map(|(i, cfg)| {
-            StreamOp::new(
-                model_dim,
-                layer_index,
-                num_layers,
-                data_type,
-                cfg,
-                residual_config,
-                prologue_params.subtree(&i.to_string()),
-                context,
-            )
-        }))
-        .await?
-        .into_boxed_slice();
+        let mut prologue = Vec::with_capacity(layer_config.prologue_configs.len());
+        for (i, cfg) in layer_config.prologue_configs.iter().enumerate() {
+            prologue.push(
+                StreamOp::new(
+                    model_dim,
+                    layer_index,
+                    num_layers,
+                    data_type,
+                    cfg,
+                    residual_config,
+                    prologue_params.subtree(&i.to_string()),
+                    files,
+                    context,
+                )
+                .await?,
+            );
+        }
+        let prologue = prologue.into_boxed_slice();
 
         let epilogue_params = parameter_tree.subtree("epilogue");
-        let epilogue = try_join_all(layer_config.epilogue_configs.iter().enumerate().map(|(i, cfg)| {
-            StreamOp::new(
-                model_dim,
-                layer_index,
-                num_layers,
-                data_type,
-                cfg,
-                residual_config,
-                epilogue_params.subtree(&i.to_string()),
-                context,
-            )
-        }))
-        .await?
-        .into_boxed_slice();
+        let mut epilogue = Vec::with_capacity(layer_config.epilogue_configs.len());
+        for (i, cfg) in layer_config.epilogue_configs.iter().enumerate() {
+            epilogue.push(
+                StreamOp::new(
+                    model_dim,
+                    layer_index,
+                    num_layers,
+                    data_type,
+                    cfg,
+                    residual_config,
+                    epilogue_params.subtree(&i.to_string()),
+                    files,
+                    context,
+                )
+                .await?,
+            );
+        }
+        let epilogue = epilogue.into_boxed_slice();
 
         let (mixer, mixer_hadamard_factors) = <dyn Mixer<B>>::new(
             model_dim,

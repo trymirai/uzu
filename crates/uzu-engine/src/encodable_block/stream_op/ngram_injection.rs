@@ -1,4 +1,4 @@
-use std::{io, mem};
+use std::mem;
 
 use crate::{
     backends::common::{
@@ -13,7 +13,7 @@ use crate::{
     data_type::DataType,
     encodable_block::{
         batch_topology::BatchTopology,
-        embedding_table_disk::EmbeddingTableDisk,
+        embedding_table_disk::{EmbeddingTableDisk, SharedFiles},
         linear::Linear,
         stream_op::{StreamOpEncodeError, StreamOpNewError},
     },
@@ -120,6 +120,7 @@ impl<B: Backend> NGramInjection<B> {
         config: &NGramInjectionConfig,
         residual_config: &GatedResidualConfig,
         parameter_tree: &ParameterTree<'_, B>,
+        files: &mut SharedFiles,
         context: &B::Context,
     ) -> Result<Self, StreamOpNewError<B>> {
         let hash_config = &config.hash_config;
@@ -171,6 +172,7 @@ impl<B: Backend> NGramInjection<B> {
             config.embedding_dim / num_heads,
             data_type,
             &parameter_tree.subtree("ngram_embedding"),
+            files,
         )
         .await?;
         let key_projection = <dyn Linear<B>>::new(
@@ -257,21 +259,33 @@ impl<B: Backend> NGramInjection<B> {
         })
     }
 
-    /// Needs to be called before [`Self::encode`]
+    pub fn ngram_embedding(&self) -> &EmbeddingTableDisk {
+        &self.ngram_embedding
+    }
+
+    /// Rows of [`Self::ngram_embedding`] the batch needs, one per token and head, token-major.
+    pub fn ngram_ids(
+        &self,
+        state: &NGramInjectionState<B>,
+        token_ids: &[u32],
+        parents: Option<&[i32]>,
+    ) -> Vec<u32> {
+        let mut ngram_ids = vec![0u32; token_ids.len() * self.num_heads() as usize];
+        hash(&self.hash_config, &state.history, token_ids, parents, &mut ngram_ids);
+        ngram_ids
+    }
+
+    /// Takes the rows looked up for [`Self::ngram_ids`]. Needs to be called before [`Self::encode`]
     // TODO(arch): use typestate?
     pub fn prepare(
         &self,
         state: &mut NGramInjectionState<B>,
         token_ids: &[u32],
-        parents: Option<&[i32]>,
-    ) -> io::Result<()> {
+        rows: Vec<u8>,
+    ) {
         assert!(state.pending_tokens.is_empty(), "n-gram rows prepared with unaccepted tokens");
-
-        let mut ngram_ids = vec![0u32; token_ids.len() * self.num_heads() as usize];
-        hash(&self.hash_config, &state.history, token_ids, parents, &mut ngram_ids);
-        self.ngram_embedding.lookup(&ngram_ids, &mut state.pending_rows)?;
         state.pending_tokens = token_ids.to_vec();
-        Ok(())
+        state.pending_rows = rows;
     }
 
     // TODO(arch): use typestate with `Self::prepare`?

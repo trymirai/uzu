@@ -14,6 +14,7 @@ use crate::{
     encodable_block::{
         batch_topology::BatchTopology,
         embedding::{Embedding, EmbeddingError},
+        embedding_table_disk::SharedFiles,
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
         mixer::{
             MixerState,
@@ -143,6 +144,7 @@ impl<B: Backend> DFlash<B> {
         // DFlash draft models are hard-coded with an additive residual.
         let residual_config = AnyResidualConfig::AdditiveResidualConfig(AdditiveResidualConfig::default());
         let mut layers = Vec::with_capacity(num_layers as usize);
+        let mut files = SharedFiles::default();
         for (layer_config, index) in config.layer_configs.iter().zip(0u32..) {
             if layer_config.rope_config.as_ref() != Some(&config.rope_config) {
                 return Err(DFlashNewError::InvalidAttentionConfig("DFlash layers must use the draft RoPE config"));
@@ -156,6 +158,7 @@ impl<B: Backend> DFlash<B> {
                 layer_config,
                 &residual_config,
                 &layers_tree.subtree(&index.to_string()),
+                &mut files,
                 context,
             )
             .await?;

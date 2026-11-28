@@ -67,7 +67,6 @@ bindings.workspace = true
 uzu-engine.workspace = true
 kiban.workspace = true
 shoji.workspace = true
-anyhow.workspace = true
 uniffi = { workspace = true, optional = true }
 napi = { workspace = true, optional = true }
 napi-derive = { workspace = true, optional = true }

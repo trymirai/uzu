@@ -1,4 +1,4 @@
-use std::{panic::AssertUnwindSafe, path::PathBuf};
+use std::{panic::AssertUnwindSafe, path::PathBuf, sync::Arc};
 
 use half::bf16;
 use uzu_engine_macros::uzu_test;
@@ -6,7 +6,7 @@ use uzu_engine_macros::uzu_test;
 use crate::{
     backends::cpu::Cpu,
     data_type::DataType,
-    encodable_block::embedding_table_disk::{EmbeddingTableDisk, EmbeddingTableDiskError},
+    encodable_block::embedding_table_disk::{EmbeddingTableDisk, EmbeddingTableDiskError, SharedFiles, lookup},
     safetensors::{ParameterLoader, ParameterLoaderError},
     tests::helpers::create_context,
 };
@@ -40,14 +40,42 @@ fn load_table(name: &str) -> (EmbeddingTableDisk, PathBuf) {
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
     let table = runtime.block_on(async {
         let loader = ParameterLoader::<Cpu>::new(&path, &context).await.expect("parameter loader");
-        let table =
-            EmbeddingTableDisk::load(NUM_ROWS, ROW_DIM, DataType::BF16, &loader.tree().subtree("ngram_embedding"))
-                .await
-                .expect("load table");
+        let table = EmbeddingTableDisk::load(
+            NUM_ROWS,
+            ROW_DIM,
+            DataType::BF16,
+            &loader.tree().subtree("ngram_embedding"),
+            &mut SharedFiles::default(),
+        )
+        .await
+        .expect("load table");
         loader.assert_all_tensors_read().expect("claim marks the tensor as read");
         table
     });
     (table, path)
+}
+
+#[uzu_test]
+fn load_shares_file_handles() {
+    let path = write_table("ngram-table-shared");
+    let context = create_context::<Cpu>();
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let (first, second, separate) = runtime.block_on(async {
+        let loader = ParameterLoader::<Cpu>::new(&path, &context).await.expect("parameter loader");
+        let tree = loader.tree().subtree("ngram_embedding");
+        let load = async |files: &mut SharedFiles| {
+            EmbeddingTableDisk::load(NUM_ROWS, ROW_DIM, DataType::BF16, &tree, files).await.expect("load table")
+        };
+        let mut files = SharedFiles::default();
+        let first = load(&mut files).await;
+        let second = load(&mut files).await;
+        let separate = load(&mut SharedFiles::default()).await;
+        (first, second, separate)
+    });
+    std::fs::remove_file(&path).expect("remove safetensors");
+
+    assert!(Arc::ptr_eq(&first.file, &second.file), "tables loaded with the same `SharedFiles` share a handle");
+    assert!(!Arc::ptr_eq(&first.file, &separate.file), "tables loaded with different `SharedFiles` don't");
 }
 
 #[uzu_test]
@@ -56,15 +84,24 @@ fn lookup_reads_rows_after_loader_and_file_are_gone() {
     std::fs::remove_file(&path).expect("remove safetensors");
 
     let ids = [0, NUM_ROWS - 1, 5, 5, 17];
-    let mut rows = vec![0xAB; 3];
-    table.lookup(&ids, &mut rows).expect("lookup");
+    let rows = lookup(&[(&table, ids)]).expect("lookup").pop().unwrap();
     assert_eq!(rows.len(), ids.len() * ROW_SIZE);
     for (&id, actual) in ids.iter().zip(rows.as_chunks::<ROW_SIZE>().0) {
         assert_eq!(actual, row(id).as_slice(), "row {id}");
     }
+}
 
-    table.lookup(&[3], &mut rows).expect("lookup");
-    assert_eq!(rows, row(3));
+#[uzu_test]
+fn lookup_keeps_lookups_in_order() {
+    let (table, path) = load_table("ngram-table-many");
+    std::fs::remove_file(&path).expect("remove safetensors");
+
+    let lookups = [(&table, vec![9, 2, 9]), (&table, vec![]), (&table, vec![2, 30])];
+    let rows = lookup(&lookups).expect("lookup");
+    assert_eq!(rows.len(), lookups.len());
+    for ((_, ids), rows) in lookups.iter().zip(&rows) {
+        assert_eq!(*rows, ids.iter().flat_map(|&id| row(id)).collect::<Vec<_>>());
+    }
 }
 
 #[uzu_test]
@@ -72,7 +109,7 @@ fn lookup_rejects_out_of_range_id() {
     let (table, path) = load_table("ngram-table-range");
     std::fs::remove_file(&path).expect("remove safetensors");
 
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| table.lookup(&[NUM_ROWS], &mut Vec::new())));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| lookup(&[(&table, [NUM_ROWS])])));
     assert!(result.is_err(), "id equal to the row count must not be read");
 }
 
@@ -84,7 +121,8 @@ fn load_rejects_wrong_shape_without_claiming() {
     runtime.block_on(async {
         let loader = ParameterLoader::<Cpu>::new(&path, &context).await.expect("parameter loader");
         let tree = loader.tree().subtree("ngram_embedding");
-        let result = EmbeddingTableDisk::load(NUM_ROWS, ROW_DIM + 1, DataType::BF16, &tree).await;
+        let result =
+            EmbeddingTableDisk::load(NUM_ROWS, ROW_DIM + 1, DataType::BF16, &tree, &mut SharedFiles::default()).await;
         assert!(matches!(
             result,
             Err(EmbeddingTableDiskError::ParameterLoaderError(ParameterLoaderError::InvalidTensor { .. }))
