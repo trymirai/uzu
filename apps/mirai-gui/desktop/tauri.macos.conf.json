@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "macOS": {
+      "minimumSystemVersion": "26.4"
+    }
+  }
+}

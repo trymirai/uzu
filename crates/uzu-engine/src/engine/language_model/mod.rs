@@ -6,16 +6,14 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::{model::language_model::LanguageModelConfig, vision::VisionConfig},
+    config::{model::language_model::LanguageModelConfig, rope::AnyRoPEConfig, vision::VisionConfig},
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
         sampling::{Sampling, SamplingMethod},
+        vision::model::{VisionLoadError, VisionModel},
     },
-    engine::{
-        Engine,
-        language_model::vision::model::{VisionLoadError, VisionModel},
-    },
+    engine::Engine,
     safetensors::{ParameterLoader, ParameterLoaderError},
     speculators::dflash_tfm::{DFlashSpeculatorLoadError, DFlashTfmSpeculator},
     utils::file,
@@ -25,7 +23,6 @@ pub use crate::{config::model::generation::GenerationConfig, utils::strict_serde
 pub mod grammar;
 pub mod state;
 pub mod stream;
-pub mod vision;
 
 pub struct LanguageModel<B: Backend> {
     engine: Arc<Engine<B>>,
@@ -57,6 +54,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     Tokenizer(#[from] tokenizers::Error),
     #[error("Image prefill does not support decoders with per-layer embeddings")]
     UnsupportedVisionPerLayerEmbedding,
+    #[error("Image prefill needs multimodal RoPE in every decoder layer with RoPE")]
+    UnsupportedVisionRoPE,
     #[error("Vision error: {0}")]
     Vision(#[from] VisionLoadError<B>),
 }
@@ -69,6 +68,13 @@ impl<B: Backend> Engine<B> {
         let config: LanguageModelConfig = serde_json::from_slice(&file::read(model_path.join("config.json")).await?)?;
         if config.vision_config.is_some() && config.decoder_config.ple_model_config.is_some() {
             return Err(EngineLoadLanguageModelError::UnsupportedVisionPerLayerEmbedding);
+        }
+
+        let has_plain_rope = config.decoder_config.transformer_config.layer_configs.iter().any(|layer| {
+            layer.rope_config.as_ref().is_some_and(|rope| !matches!(rope, AnyRoPEConfig::MultimodalRoPEConfig(_)))
+        });
+        if config.vision_config.is_some() && has_plain_rope {
+            return Err(EngineLoadLanguageModelError::UnsupportedVisionRoPE);
         }
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*self.context).await?;

@@ -12,9 +12,7 @@ use crate::{
         embedding::{Embedding, EmbeddingError},
         normalization::{Normalization, NormalizationNewError, ShortcutMode},
         per_layer_embedding::{PerLayerEmbedding, PerLayerEmbeddingError},
-        transformer::{
-            Transformer, TransformerEncodeError, TransformerEncodeOutput, TransformerNewError, TransformerState,
-        },
+        transformer::{Transformer, TransformerEncodeError, TransformerNewError, TransformerState},
     },
     safetensors::ParameterTree,
 };
@@ -137,6 +135,10 @@ impl<B: Backend> Decoder<B> {
         self.transformer.prefill_cache_skips_trailing_layers()
     }
 
+    pub fn transformer(&self) -> &Transformer<B> {
+        &self.transformer
+    }
+
     pub fn create_empty_state(
         &self,
         max_context_length: Option<u32>,
@@ -171,7 +173,7 @@ impl<B: Backend> Decoder<B> {
             None
         };
 
-        let transformer_output = self.encode_embedded(
+        let transformer_output = self.transformer.encode(
             embedded,
             per_layer_inputs.as_ref(),
             batch_dim,
@@ -205,27 +207,5 @@ impl<B: Backend> Decoder<B> {
             hidden_features: transformer_output.hidden_features,
             final_hidden,
         })
-    }
-
-    // proxy method to transformer, to avoid making `transformer` field pub
-    pub fn encode_embedded(
-        &self,
-        embedded: B::ScratchBuffer,
-        per_layer_inputs: Option<impl BufferRef<Backend = B>>,
-        batch_dim: &BatchTopology<B>,
-        output_range: Option<Range<u32>>,
-        hidden_feature_layer_indices: Option<&[u32]>,
-        state: Option<&mut TransformerState<B>>,
-        command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
-    ) -> Result<TransformerEncodeOutput<B>, DecoderError<B>> {
-        Ok(self.transformer.encode(
-            embedded,
-            per_layer_inputs,
-            batch_dim,
-            output_range,
-            hidden_feature_layer_indices,
-            state,
-            command_buffer,
-        )?)
     }
 }

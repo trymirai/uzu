@@ -11,6 +11,7 @@
 #include "../vision/patch_grid.h"
 
 namespace kv_layout = uzu::kv_layout;
+using uzu::rope::RoPEKind;
 
 template <typename T>
 METAL_FUNC T prepare_norm(
@@ -48,7 +49,7 @@ PUBLIC KERNEL(AttentionPrepare)(
     device bfloat* k_scales OPTIONAL(append_kv),
     device uchar* v_codes OPTIONAL(append_kv),
     device bfloat* v_scales OPTIONAL(append_kv),
-    const device float* rope_inverse_frequencies OPTIONAL(has_rope),
+    const device float* rope_inverse_frequencies OPTIONAL(rope_kind != RoPEKind::None),
     const device float* query_norm_scales OPTIONAL(has_query_norm_scales),
     const device float* key_norm_scales OPTIONAL(has_key_norm_scales),
     const device float* value_norm_scales OPTIONAL(has_value_norm_scales),
@@ -57,18 +58,17 @@ PUBLIC KERNEL(AttentionPrepare)(
     device ElementT* raw_keys OPTIONAL(block_mean),
     const constant uzu::qkv_norm::QKVNormParams& norm_params,
     const constant uint32_t& num_q_heads,
-    const constant uint32_t& rope_dim OPTIONAL(has_rope),
-    const constant float& rope_scale OPTIONAL(has_rope),
-    const constant uint32_t& rope_position_offset OPTIONAL(has_rope),
-    const constant uzu::rope::RoPEGridParams& rope_grid OPTIONAL(has_mrope),
+    const constant uint32_t& rope_dim OPTIONAL(rope_kind != RoPEKind::None),
+    const constant float& rope_scale OPTIONAL(rope_kind != RoPEKind::None),
+    const constant uint32_t& rope_position_offset OPTIONAL(rope_kind != RoPEKind::None),
+    const constant uzu::rope::RoPEGridParams& rope_grid OPTIONAL(rope_kind == RoPEKind::ContiguousGrid || rope_kind == RoPEKind::InterleavedGrid),
     const constant uint32_t& kv_token_offset,
     const constant uint32_t& input_row_stride,
     const constant uint32_t& suffix_length,
     const constant uint32_t& query_rows,
     const constant uint32_t& prefix_tokens OPTIONAL(block_mean),
     const device uzu::trie::TrieNode* trie OPTIONAL(has_trie),
-    const bool has_rope SPECIALIZE,
-    const bool has_mrope SPECIALIZE,
+    const RoPEKind rope_kind SPECIALIZE,
     const uint32_t num_kv_heads SPECIALIZE,
     const uint32_t backend_opaque_layout SPECIALIZE,
     const bool append_kv SPECIALIZE,
@@ -153,9 +153,11 @@ PUBLIC KERNEL(AttentionPrepare)(
                     : rsqrt(sum_sq / float(HEAD_DIM) + epsilon);
   }
 
+  const bool has_rope = rope_kind != RoPEKind::None;
   uint32_t rope_position = has_rope ? rope_position_offset + (has_trie ? trie[token_idx].height : token_idx) : 0;
   uint32_t grid_row = 0;
   uint32_t grid_column = 0;
+  const bool has_mrope = rope_kind == RoPEKind::ContiguousGrid || rope_kind == RoPEKind::InterleavedGrid;
   if (has_mrope) {
     const uint32_t cell = rope_grid.first_cell + (has_trie ? trie[token_idx].height : token_idx);
     const uint32_t grid_size = rope_grid.grid_width * rope_grid.grid_height;
@@ -202,7 +204,7 @@ PUBLIC KERNEL(AttentionPrepare)(
             grid_column,
             rope_grid.height_pairs,
             rope_grid.width_pairs,
-            rope_grid.interleaved_axes != 0
+            rope_kind == RoPEKind::InterleavedGrid
         );
       }
       element = ElementT(

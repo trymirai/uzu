@@ -6,7 +6,7 @@ use crate::{
         Backend, BufferRef, CommandBuffer, CommandBufferEncoding, Kernels,
         gpu_types::{
             qkv_norm::{QKVL2Op, QKVNormParams},
-            rope::RoPEGridParams,
+            rope::RoPEKind,
         },
         kernel::{
             AttentionArguments, AttentionInput, AttentionKernel, AttentionKernelConfig, AttentionPrepareKernel,
@@ -18,7 +18,10 @@ use crate::{
     encodable_block::{
         batch_topology::{BatchKind, BatchTopology},
         linear::{InputRhtParameters, Linear, LinearBlockError, LinearEncodeError},
-        mixer::{Mixer, MixerEncodeError, MixerState, attention::rope::RoPE},
+        mixer::{
+            Mixer, MixerEncodeError, MixerState,
+            attention::rope::{RoPE, RoPEAxes},
+        },
     },
     safetensors::{ParameterLoaderError, ParameterTree},
     utils::maybe_mut::MaybeMut,
@@ -83,7 +86,7 @@ impl<B: Backend> Attention<B> {
     ) -> Result<(Self, Option<InputRhtParameters<B>>), AttentionNewError<B>> {
         let (projection, in_projection_input_hadamard_factors) = <dyn Linear<B>>::new_with_input_rht(
             hidden_dim,
-            Self::get_projection_dim(config),
+            config.qkvg_head_count() * config.head_dim,
             data_type,
             config.has_qkvg_biases,
             &parameter_tree.subtree("qkvg_projection"),
@@ -162,7 +165,7 @@ impl<B: Backend> Attention<B> {
         let ring_capacity = sliding_window_size;
         let is_kv_cache_ring = ring_capacity.is_some();
 
-        let projection_dim = Self::get_projection_dim(config);
+        let projection_dim = config.qkvg_head_count() * config.head_dim;
         let kernel = <B::Kernels as Kernels>::AttentionKernel::new(
             context,
             AttentionKernelConfig {
@@ -181,15 +184,13 @@ impl<B: Backend> Attention<B> {
         )
         .map_err(AttentionNewError::Kernel)?;
 
-        let has_rope = rope.is_some();
-        let has_mrope = rope.as_ref().is_some_and(|rope| rope.frequency_pairs_per_axis.is_some());
+        let rope_kind = rope.as_ref().map_or(RoPEKind::None, RoPE::kind);
         let new_prepare = |has_trie: bool| {
             <B::Kernels as Kernels>::AttentionPrepareKernel::new(
                 context,
                 data_type,
                 head_dim,
-                has_rope,
-                has_mrope,
+                rope_kind,
                 num_groups,
                 kernel.kv_layout().backend_opaque_layout,
                 !is_kv_sharing,
@@ -226,7 +227,7 @@ impl<B: Backend> Attention<B> {
         })
     }
 
-    pub fn attend(
+    fn attend(
         &self,
         hidden: B::ScratchBuffer,
         batch_dim: &BatchTopology<B>,
@@ -349,33 +350,10 @@ impl<B: Backend> Attention<B> {
             &self.prepare
         };
 
-        let rope_grid_params = rope.and_then(|rope| {
-            let [_, height_pairs, width_pairs] = rope.frequency_pairs_per_axis?;
-            let (grid_width, grid_height, merge_size, first_cell) = match batch_kind {
-                &BatchKind::Image {
-                    width,
-                    height,
-                    merge_size,
-                    first_cell,
-                } => (width, height, merge_size, first_cell),
-                _ => (1, 1, 1, 0),
-            };
-            Some(RoPEGridParams {
-                grid_width,
-                grid_height,
-                first_cell,
-                height_pairs,
-                width_pairs,
-                merge_size,
-                interleaved_axes: u32::from(rope.interleaved_axes),
-            })
-        });
-        let rope_position_offset = rope.map(|rope| {
-            if rope.frequency_pairs_per_axis.is_some() {
-                cache.rope_position()
-            } else {
-                cache.context_length()
-            }
+        let rope_grid_params = rope.and_then(|rope| rope.grid_params(batch_kind));
+        let rope_position_offset = rope.map(|rope| match rope.axes {
+            RoPEAxes::Sequential => cache.context_length(),
+            _ => cache.rope_position(),
         });
         prepare.encode(
             qkvg,
@@ -407,10 +385,6 @@ impl<B: Backend> Attention<B> {
             command_buffer,
         );
         Ok((query_codes, query_scales))
-    }
-
-    fn get_projection_dim(config: &AttentionConfig) -> u32 {
-        config.qkvg_head_count() * config.head_dim
     }
 }
 

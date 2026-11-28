@@ -6,6 +6,7 @@ use crate::{
         common::{BufferMut, CommandBuffer, CommandBufferEncoding, Kernels, kernel::VisionPositionEmbeddingKernel},
     },
     data_type::DataType,
+    encodable_block::cell_grid::CellGrid,
     safetensors::{ParameterLoaderError, ParameterTree},
 };
 
@@ -59,9 +60,7 @@ impl<B: Backend> VisionPositionEmbedding<B> {
     pub fn encode(
         &self,
         stream: impl BufferMut<Backend = B>,
-        grid_width: u32,
-        grid_height: u32,
-        merge_size: u32,
+        grid: CellGrid,
         command_buffer: &mut <B::CommandBuffer as CommandBuffer>::Encoding,
     ) {
         let command_buffer = &mut *command_buffer.debug_group("vision embedding encode");
@@ -69,11 +68,11 @@ impl<B: Backend> VisionPositionEmbedding<B> {
             &self.table,
             stream,
             self.side,
-            grid_width,
-            grid_height,
-            merge_size,
+            grid.width,
+            grid.height,
+            grid.merge_size,
             self.model_dim,
-            grid_width * grid_height * self.model_dim,
+            grid.cell_count() * self.model_dim,
             command_buffer,
         );
     }

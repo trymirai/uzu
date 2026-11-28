@@ -18,15 +18,17 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        batch_topology::BatchTopology, decoder::DecoderEncodeOutput, mixer::attention::ATTENTION_SUFFIX_CAPACITY,
+        batch_topology::BatchTopology,
+        decoder::{DecoderEncodeOutput, DecoderError},
+        mixer::attention::ATTENTION_SUFFIX_CAPACITY,
         sampling::SamplingMethod,
+        vision::model::VisionEncodeError,
     },
     engine::language_model::{
         LanguageModel,
         grammar::Grammar,
         state::LanguageModelState,
         stream::{LanguageModelInput, LanguageModelStreamError, LanguageModelStreamOptions},
-        vision::model::VisionEncodeError,
     },
     trie,
     utils::{
@@ -866,9 +868,8 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
         let image = vision_model.encode(image, command_buffer)?;
         drop(encode_span);
 
-        let embedding = model.decoder.embedding();
-        let row_size = size_for_shape(&[embedding.model_dim()], embedding.data_type());
-        let row_count = image.width * image.height;
+        let row_count = image.grid.cell_count();
+        let row_size = image.embeddings.size() / row_count as usize;
         for start in (0..row_count).step_by(ATTENTION_SUFFIX_CAPACITY as usize) {
             let length = (row_count - start).min(ATTENTION_SUFFIX_CAPACITY);
 
@@ -880,16 +881,20 @@ impl<'a, B: Backend> StreamEnqueuer<'a, B> {
                 image.embeddings.subrange(start as usize * row_size..(start + length) as usize * row_size),
                 &mut embedded,
             );
-            let batch_dim = BatchTopology::image(image.width, image.height, 1, start..start + length);
-            let output = model.decoder.encode_embedded(
-                embedded,
-                None::<&B::ScratchBuffer>,
-                &batch_dim,
-                None,
-                model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
-                Some(&mut model_state.transformer_state),
-                command_buffer,
-            )?;
+            let batch_dim = BatchTopology::image(image.grid, start..start + length);
+            let output = model
+                .decoder
+                .transformer()
+                .encode(
+                    embedded,
+                    None::<&B::ScratchBuffer>,
+                    &batch_dim,
+                    None,
+                    model.speculator.as_ref().map(|speculator| speculator.hidden_feature_layer_indices()),
+                    Some(&mut model_state.transformer_state),
+                    command_buffer,
+                )
+                .map_err(DecoderError::from)?;
             drop(encode_span);
 
             Self::accept_prefill(model, model_state, &batch_dim, output.hidden_features.as_deref(), command_buffer)?;

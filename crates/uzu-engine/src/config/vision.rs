@@ -3,18 +3,10 @@ use uzu_engine_macros::uzu_config;
 use crate::{
     backends::common::gpu_types::vision::CHANNELS,
     config::{
-        activation::AnyActivation, linear::LinearConfig, normalization::NormalizationConfig,
+        linear::LinearConfig, mlp::ungated_mlp::UngatedMLPConfig, normalization::NormalizationConfig,
         token_mixer::attention::AttentionConfig,
     },
 };
-
-#[uzu_config]
-pub struct UngatedMLPConfig {
-    pub linear_config: LinearConfig,
-    pub activation: AnyActivation,
-    pub has_up_biases: bool,
-    pub has_down_biases: bool,
-}
 
 #[uzu_config]
 pub struct InterpolatedPositionEmbeddingConfig {

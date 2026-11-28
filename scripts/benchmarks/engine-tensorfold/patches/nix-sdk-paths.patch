@@ -1,6 +1,6 @@
 --- a/zig/build/metal_targets.zig
 +++ b/zig/build/metal_targets.zig
-@@ -494,6 +494,12 @@
+@@ -432,6 +432,12 @@
          .optimize = optimize,
          .link_libc = true,
      });
@@ -10,6 +10,6 @@
 +        metal.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
 +        metal.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
 +    }
-     metal.linkFramework("Metal", .{});
-     metal.linkFramework("Foundation", .{});
-     metal.linkFramework("IOSurface", .{}); // the Neural Engine's prompt share passes IOSurfaces
+     if (target.result.os.tag == .macos) {
+         metal.linkFramework("Metal", .{});
+         metal.linkFramework("Foundation", .{});

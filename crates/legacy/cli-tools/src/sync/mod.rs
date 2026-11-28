@@ -1,21 +1,19 @@
 use std::path::Path;
 
 mod docs;
-mod jsr;
 mod license;
 mod mirai_gui;
 mod package_json;
-mod pi_extension;
 mod playground;
 mod pyproject;
 mod readme;
+mod replace;
 mod swift_package;
 mod toolchains;
 mod typescript_version;
 mod wasm_tool;
 
-use anyhow::{Ok, Result, anyhow};
-pub use jsr::JsrSyncTask;
+use anyhow::{Context, Ok, Result, anyhow};
 pub use license::LicenseSyncTask;
 pub use mirai_gui::MiraiGuiSyncTask;
 pub use package_json::PackageJsonSyncTask;
@@ -44,14 +42,20 @@ pub trait SyncTask {
         input_path: &Path,
         check: bool,
     ) -> Result<()> {
-        let input = std::fs::read_to_string(input_path).unwrap_or_default();
-        let output = self.process(platforms, workspace, &input)?;
+        // A missing file is generated whole; any other read error stops the sync.
+        let input = match std::fs::read_to_string(input_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            input => input.with_context(|| format!("Failed to read {}", input_path.display()))?,
+        };
+        let output = self
+            .process(platforms, workspace, &input)
+            .with_context(|| format!("Failed to sync {}", input_path.display()))?;
         if check {
             if input != output {
                 return Err(anyhow!("The file is out of sync: {}", input_path.display()));
             }
         } else {
-            std::fs::write(input_path, output)?;
+            std::fs::write(input_path, output).with_context(|| format!("Failed to write {}", input_path.display()))?;
         }
         Ok(())
     }
@@ -94,26 +98,13 @@ pub fn run_sync(check: bool) -> Result<()> {
     )?;
 
     let typescript_bindings_path = paths.bindings_for_language_path(Language::TypeScript);
-    PackageJsonSyncTask::new(Language::TypeScript).run(
+    PackageJsonSyncTask::Bindings(Language::TypeScript).run(
         &platforms,
         &workspace,
         &typescript_bindings_path.join("package.json"),
         check,
     )?;
-    JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json"), check)?;
-    JsrSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("jsr.json.orig"), check)?;
-    TypeScriptVersionSyncTask::Constant.run(
-        &platforms,
-        &workspace,
-        &typescript_bindings_path.join("src/version.ts"),
-        check,
-    )?;
-    TypeScriptVersionSyncTask::NapiLoader.run(
-        &platforms,
-        &workspace,
-        &paths.napi_output_path().join("index.js"),
-        check,
-    )?;
+    TypeScriptVersionSyncTask.run(&platforms, &workspace, &paths.napi_output_path().join("index.js"), check)?;
     LicenseSyncTask.run(&platforms, &workspace, &typescript_bindings_path.join("LICENSE"), check)?;
     ReadmeSyncTask::new(vec![Language::TypeScript]).run(
         &platforms,
@@ -123,7 +114,7 @@ pub fn run_sync(check: bool) -> Result<()> {
     )?;
 
     let wasm_bindings_path = paths.bindings_for_language_path(Language::Wasm);
-    PackageJsonSyncTask::new(Language::Wasm).run(
+    PackageJsonSyncTask::Bindings(Language::Wasm).run(
         &platforms,
         &workspace,
         &wasm_bindings_path.join("package.json"),
@@ -139,7 +130,7 @@ pub fn run_sync(check: bool) -> Result<()> {
 
     PlaygroundSyncTask.run(&platforms, &workspace, &root_path.join("apps/playground/Project.swift"), check)?;
 
-    pi_extension::PiExtensionSyncTask.run(
+    PackageJsonSyncTask::App.run(
         &platforms,
         &workspace,
         &root_path.join("apps/uzu-pi-extension/package.json"),
@@ -147,8 +138,8 @@ pub fn run_sync(check: bool) -> Result<()> {
     )?;
 
     let mirai_gui_path = root_path.join("apps/mirai-gui");
-    MiraiGuiSyncTask::PackageJson.run(&platforms, &workspace, &mirai_gui_path.join("package.json"), check)?;
-    MiraiGuiSyncTask::TauriConf.run(&platforms, &workspace, &mirai_gui_path.join("desktop/tauri.conf.json"), check)?;
+    PackageJsonSyncTask::App.run(&platforms, &workspace, &mirai_gui_path.join("package.json"), check)?;
+    MiraiGuiSyncTask.run(&platforms, &workspace, &mirai_gui_path.join("desktop/tauri.macos.conf.json"), check)?;
 
     docs::sync_docs(&platforms, root_path, check)?;
 

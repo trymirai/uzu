@@ -58,10 +58,12 @@ KERNEL(AttentionVector)(
   const uint key_row = lane / CHANNEL_LANES;
   const uint channel_group = lane % CHANNEL_LANES;
   const uint kv_head = row / (params.q_len * params.gqa_factor);
-  const uint suffix_position = is_kv_cache_ring ? ring_params.ring_length : params.q_off;
+  const uint prefix_length = params.q_off;
+  const uint ring_offset = is_kv_cache_ring ? ring_params.ring_offset : 0u;
+  const KeyWindow window = KeyWindow::make(is_causal, is_sliding_window, sliding_window_size);
   const uzu::kv_layout::KVShape shape{HEAD_DIM, num_kv_heads, uzu::kv_layout::KVLayout::RowMajor};
   uint q_position[QUERIES];
-  uint query_position[QUERIES];
+  uint oldest_visible[QUERIES];
   float query_scale[QUERIES];
   float4 result[QUERIES][N] = {};
   float maximum[QUERIES];
@@ -69,15 +71,23 @@ KERNEL(AttentionVector)(
   METAL_PRAGMA_UNROLL
   for (uint q = 0; q < QUERIES; ++q) {
     q_position[q] = (row + q) % params.q_len;
-    query_position[q] = suffix_position + (is_trie ? trie[q_position[q]].height : q_position[q]);
+    oldest_visible[q] =
+        window.oldest_visible(prefix_length, is_trie && is_sliding_window ? trie[q_position[q]].height : q_position[q]);
     query_scale[q] = float(query_scales[row + q]) * params.scale * M_LOG2E_F;
     maximum[q] = -INFINITY;
     denominator[q] = 0.0f;
   }
-  const uint begin = SPLIT_KV ? split * params.nk / num_splits : 0;
-  const uint end = SPLIT_KV ? (split + 1) * params.nk / num_splits : (params.k_len + TILE_KEYS - 1) / TILE_KEYS;
-  for (uint block = begin; block < end; ++block) {
-    const uint first_key = block * TILE_KEYS;
+  const VisibleKeyBlocks blocks = VisibleKeyBlocks::make<TILE_KEYS>(
+      window,
+      is_causal,
+      prefix_length,
+      ring_offset,
+      !(is_kv_cache_ring || is_sliding_window),
+      tile_query_range(row, row + QUERIES - 1u, params.q_len, is_trie)
+  );
+  const uint2 split_blocks = blocks.split(blocks.count_until(div_ceil(params.k_len, TILE_KEYS)), split, num_splits);
+  for (uint block = split_blocks.x; block < split_blocks.y; ++block) {
+    const uint first_key = blocks.block_at(block) * TILE_KEYS;
     const size_t region = shape.block_region(first_key / 32, kv_head) + (first_key % 32) * HEAD_DIM;
     float4 scores[QUERIES] = {};
     _Pragma("clang loop unroll_count(4)") for (uint fragment_index = 0; fragment_index < HEAD_DIM / (CHANNEL_LANES * 4);
@@ -99,6 +109,21 @@ KERNEL(AttentionVector)(
           scores[q][i] += dot(query, keys[i]);
       }
     }
+    uint key_positions[KEYS_PER_LANE];
+    RowRange seeing_rows[KEYS_PER_LANE];
+    METAL_PRAGMA_UNROLL
+    for (uint i = 0; i < KEYS_PER_LANE; ++i) {
+      const uint key = first_key + key_row + i * KEY_ROWS;
+      key_positions[i] = position_of_key(key, params.k_len, prefix_length, ring_offset);
+      seeing_rows[i] = RowRange::all();
+      if (is_trie && key >= prefix_length && key < params.k_len) {
+        const auto node = trie[key - prefix_length];
+        seeing_rows[i] = RowRange::make(node.trie_start, node.trie_end);
+        if (is_sliding_window) {
+          key_positions[i] = prefix_length + node.height;
+        }
+      }
+    }
     float4 probabilities[QUERIES];
     float correction[QUERIES];
     METAL_PRAGMA_UNROLL
@@ -110,20 +135,8 @@ KERNEL(AttentionVector)(
       METAL_PRAGMA_UNROLL
       for (uint i = 0; i < KEYS_PER_LANE; ++i) {
         const uint key = first_key + key_row + i * KEY_ROWS;
-        const bool visible = key < params.k_len && should_use_key(
-                                                       ring_params,
-                                                       trie,
-                                                       sliding_window_size,
-                                                       q_position[q],
-                                                       params.q_off,
-                                                       suffix_position,
-                                                       query_position[q],
-                                                       key,
-                                                       is_kv_cache_ring,
-                                                       is_causal,
-                                                       is_trie,
-                                                       is_sliding_window
-                                                   );
+        const bool visible = window.sees(oldest_visible[q], key_positions[i]) &&
+                             (!(is_trie && is_causal) || seeing_rows[i].contains(q_position[q]));
         const size_t scale_index = shape.scale_index(key, kv_head);
         scores[q][i] = visible ? scores[q][i] * query_scale[q] * float(key_scales[scale_index]) : -INFINITY;
         value_scale[i] = visible ? float(value_scales[scale_index]) : 0.0f;

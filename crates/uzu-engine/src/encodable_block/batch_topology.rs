@@ -1,13 +1,12 @@
 use std::ops::Range;
 
+use super::cell_grid::CellGrid;
 use crate::backends::common::Backend;
 
 pub enum BatchKind<B: Backend> {
     Flat,
     Image {
-        width: u32,
-        height: u32,
-        merge_size: u32,
+        grid: CellGrid,
         first_cell: u32,
     },
     Trie {
@@ -30,16 +29,12 @@ impl<B: Backend> BatchTopology<B> {
     }
 
     pub fn image(
-        width: u32,
-        height: u32,
-        merge_size: u32,
+        grid: CellGrid,
         cells: Range<u32>,
     ) -> Self {
         Self {
             kind: BatchKind::Image {
-                width,
-                height,
-                merge_size,
+                grid,
                 first_cell: cells.start,
             },
             size: cells.end - cells.start,
@@ -66,6 +61,26 @@ impl<B: Backend> BatchTopology<B> {
 
     pub fn size(&self) -> u32 {
         self.size
+    }
+
+    /// How far the RoPE position moves when `accepted` rows of this batch are accepted
+    pub fn position_advance(
+        &self,
+        accepted: u32,
+    ) -> u32 {
+        match self.kind {
+            BatchKind::Image {
+                grid,
+                first_cell,
+            } if first_cell + accepted == grid.cell_count() => grid.width.max(grid.height),
+            BatchKind::Image {
+                ..
+            } => 0,
+            BatchKind::Flat
+            | BatchKind::Trie {
+                ..
+            } => accepted,
+        }
     }
 
     pub fn full_accept(&self) -> bool {
