@@ -13,6 +13,7 @@ export const platformInfo = {
     logExport: __PLATFORM__ === "tauri",
     localModelDownloads: __PLATFORM__ === "tauri" || __PLATFORM__ === "demo",
     autoEject: __PLATFORM__ === "tauri",
+    webSearch: isMacApp,
     cliInstall: isMacApp,
     // Overlay title bar with in-content macOS traffic lights: UI must reserve
     // space on the top-left so controls don't sit under the traffic lights.

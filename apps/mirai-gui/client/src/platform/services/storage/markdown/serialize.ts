@@ -5,10 +5,12 @@ import type { TranscriptItem } from "@/types/llm-stream";
 
 const sanitize = (text: string): string => text.replace(/\uFFFD/g, "");
 
+// JSON leaves these characters as they are; each would end the comment or the line it has to stay on.
+const escapeForTranscriptLine = (json: string): string =>
+  json.replace(/[<>\u2028\u2029]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
 const formatTranscript = (items?: TranscriptItem[]): string[] =>
-  items === undefined
-    ? []
-    : [`<!-- TRANSCRIPT: ${JSON.stringify(items).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")} -->`];
+  items === undefined ? [] : [`<!-- TRANSCRIPT: ${escapeForTranscriptLine(JSON.stringify(items))} -->`];
 
 const formatPerfToMarkdown = (perf?: PerfStats): string[] => {
   if (!perf) return [];

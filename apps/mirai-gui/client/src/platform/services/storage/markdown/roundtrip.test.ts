@@ -29,6 +29,13 @@ it("round-trips an over-budget title in the original Markdown heading without tr
   expect(parseMetadata(markdown, "chat", 2)).toEqual({ ...chat.metadata, title });
 });
 
+it("skips a header line it does not know", () => {
+  const markdown = serializeToMarkdown(chat).replace("**Messages:** 2\n", "**Messages:** 2\n**Folder:** work\n");
+  expect(markdown).toContain("**Folder:** work");
+  expect(parseMetadata(markdown, "chat", 2)).toEqual(chat.metadata);
+  expect(extractMessageBlocks(markdown)).toHaveLength(2);
+});
+
 it("does not use a heading from message content as a missing chat title", () => {
   const markdown = "**Model:** Model\n\n---\n\n# Heading in a message";
   expect(parseMetadata(markdown, "chat", 0).title).toBe("Untitled");
@@ -71,6 +78,27 @@ it("keeps ordered tool transcripts through saving and regeneration, including ma
         datasets: [{ label: "Spending", data: [900, 350] }],
       },
     },
+    { type: "webSearch", query: "rent <!-- END_CONTENT -->", called: false },
+    {
+      type: "webSearch",
+      query: "average rent",
+      called: true,
+      sources: [{ title: "Rents --> 2026 <b>report</b>", url: "https://example.com/rent?a=1&b=2" }],
+    },
+    {
+      type: "webSearch",
+      query: "food prices",
+      called: true,
+      failed: true,
+      failure: { kind: "limit", provider: "Exa" },
+    },
+    {
+      type: "webPage",
+      url: "https://example.com/rent?a=1&b=2",
+      called: true,
+      source: { title: "Rents", url: "https://example.com/rent" },
+    },
+    { type: "webPage", url: "", called: false },
     { type: "thinking", text: "Use the result", completed: true },
     { type: "text", text: "After tool" },
   ];
@@ -93,6 +121,26 @@ it("keeps ordered tool transcripts through saving and regeneration, including ma
   expect(messages[2]?.versions?.[1]?.output?.transcript).toEqual(versions[1]?.output?.transcript);
   expect(messages[2]?.versions?.[1]?.error).toBe("Canceled");
   expect(messages[2]?.currentVersionIndex).toBe(1);
+
+  const tampered = markdown.replace("https://example.com/rent?a=1&b=2", "javascript:alert(1)");
+  expect(tampered).not.toBe(markdown);
+  expect(extractMessageBlocks(tampered).map(parseMessage)[1]?.output?.transcript).toBeUndefined();
+});
+
+it("keeps a transcript whose page title holds a line separator", () => {
+  const transcript: TranscriptItem[] = [
+    {
+      type: "webSearch",
+      query: "news",
+      called: true,
+      sources: [{ title: "Breaking\u2028news\u2029today", url: "https://example.com/news" }],
+    },
+  ];
+  const answer = { ...chat.messages[1]!, text: "Answer", output: { transcript } };
+  const markdown = serializeToMarkdown({ ...chat, messages: [chat.messages[0]!, answer] });
+
+  expect(markdown).not.toMatch(/[\u2028\u2029]/);
+  expect(extractMessageBlocks(markdown).map(parseMessage)[1]?.output?.transcript).toEqual(transcript);
 });
 
 it("ignores malformed transcript metadata and retains the legacy body", () => {

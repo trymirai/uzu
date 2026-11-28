@@ -1,4 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import type { WebSearchKeyProvider, WebSearchProvider } from "@/constants/web-search-providers";
+import type { WebSearchStoredKey } from "@/types/web-search";
 import { useSettingsStore } from "./use-settings-store";
 
 const settings = vi.hoisted(() => ({
@@ -8,6 +10,11 @@ const settings = vi.hoisted(() => ({
   setModelChatNamingEnabled: vi.fn<(enabled: boolean) => Promise<void>>().mockResolvedValue(undefined),
   getAutoEjectEnabled: vi.fn(async () => true),
   getAutoEjectMinutes: vi.fn(async () => 15),
+  getWebSearchProvider: vi.fn(async (): Promise<WebSearchProvider> => "exa"),
+  setWebSearchProvider: vi.fn<(provider: WebSearchProvider) => Promise<void>>().mockResolvedValue(undefined),
+  getWebSearchKeys: vi.fn(async (): Promise<WebSearchStoredKey[]> => []),
+  saveWebSearchKey: vi.fn<(provider: WebSearchKeyProvider, key: string) => Promise<WebSearchStoredKey[]>>(),
+  removeWebSearchKey: vi.fn<(provider: WebSearchKeyProvider) => Promise<WebSearchStoredKey[]>>(),
 }));
 
 vi.mock("@/platform/platform-singleton", () => ({ getPlatform: () => ({ settings }) }));
@@ -77,4 +84,61 @@ it("loads an explicit auto-eject interval without replacing it with the default"
   settings.getAutoEjectMinutes.mockResolvedValueOnce(7);
   await useSettingsStore.getState().fetch();
   expect(useSettingsStore.getState().autoEjectMinutes).toBe(7);
+});
+
+it("reads the saved search provider and falls back to DuckDuckGo when it cannot be read", async () => {
+  settings.getWebSearchProvider.mockResolvedValueOnce("keenable");
+  await useSettingsStore.getState().fetch();
+  expect(useSettingsStore.getState().webSearchProvider).toBe("keenable");
+
+  settings.getWebSearchProvider.mockRejectedValueOnce(new Error("read failed"));
+  await useSettingsStore.getState().fetch();
+  expect(useSettingsStore.getState().webSearchProvider).toBe("duckduckgo");
+});
+
+it("applies a search provider choice at once and restores the previous one when it cannot be saved", async () => {
+  await useSettingsStore.getState().setWebSearchProvider("keenable");
+  expect(settings.setWebSearchProvider).toHaveBeenCalledWith("keenable");
+  expect(useSettingsStore.getState().webSearchProvider).toBe("keenable");
+
+  settings.setWebSearchProvider.mockRejectedValueOnce(new Error("write failed"));
+  await useSettingsStore.getState().setWebSearchProvider("exa");
+  expect(useSettingsStore.getState().webSearchProvider).toBe("keenable");
+});
+
+it("shows how the stored keys end, saves a key the provider accepts and reports one it refuses", async () => {
+  settings.getWebSearchKeys.mockResolvedValueOnce([{ provider: "exa", ending: "9f2c" }]);
+  await useSettingsStore.getState().fetch();
+  expect(useSettingsStore.getState().webSearchKeys).toEqual({ exa: "9f2c" });
+
+  settings.saveWebSearchKey.mockRejectedValueOnce(new Error("Brave did not accept this key"));
+  expect(await useSettingsStore.getState().saveWebSearchKey("brave", "wrong")).toBe("Brave did not accept this key");
+  expect(useSettingsStore.getState().webSearchKeys).toEqual({ exa: "9f2c" });
+
+  settings.saveWebSearchKey.mockResolvedValueOnce([
+    { provider: "brave", ending: "a1b2" },
+    { provider: "exa", ending: "9f2c" },
+  ]);
+  expect(await useSettingsStore.getState().saveWebSearchKey("brave", "right")).toBeNull();
+  expect(settings.saveWebSearchKey).toHaveBeenLastCalledWith("brave", "right");
+  expect(useSettingsStore.getState().webSearchKeys).toEqual({ brave: "a1b2", exa: "9f2c" });
+});
+
+it("goes back to DuckDuckGo when the key of the chosen provider that needs one is removed", async () => {
+  useSettingsStore.setState({ webSearchProvider: "exa", webSearchKeys: { brave: "a1b2", exa: "9f2c" } });
+  settings.removeWebSearchKey.mockResolvedValueOnce([{ provider: "brave", ending: "a1b2" }]);
+  await useSettingsStore.getState().removeWebSearchKey("exa");
+  expect(useSettingsStore.getState()).toMatchObject({ webSearchProvider: "exa", webSearchKeys: { brave: "a1b2" } });
+
+  useSettingsStore.setState({ webSearchProvider: "brave" });
+  settings.removeWebSearchKey.mockResolvedValueOnce([]);
+  await useSettingsStore.getState().removeWebSearchKey("brave");
+  expect(useSettingsStore.getState()).toMatchObject({ webSearchProvider: "duckduckgo", webSearchKeys: {} });
+  expect(settings.setWebSearchProvider).toHaveBeenCalledExactlyOnceWith("duckduckgo");
+
+  useSettingsStore.setState({ webSearchProvider: "brave", webSearchKeys: { brave: "a1b2" } });
+  settings.removeWebSearchKey.mockRejectedValueOnce(new Error("keychain"));
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  await useSettingsStore.getState().removeWebSearchKey("brave");
+  expect(useSettingsStore.getState()).toMatchObject({ webSearchProvider: "brave", webSearchKeys: { brave: "a1b2" } });
 });

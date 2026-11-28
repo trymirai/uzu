@@ -4,6 +4,7 @@ import { useChatStore } from "@/stores/use-chat-store";
 import { useChatSessionStore } from "@/stores/use-chat-session-store";
 import { useModelParamsStore } from "@/stores/use-model-params-store";
 import { useModelsStore } from "@/stores/use-models-store";
+import { useWebSearchStore } from "@/stores/use-web-search-store";
 import { ModelKind } from "@/types/models";
 import { useRuntimeSessionStore } from "@/stores/use-runtime-session-store";
 import type { ToastApi } from "@/components/ui/toast/use-toast";
@@ -21,6 +22,7 @@ const toast = { error: vi.fn(), info: vi.fn(), warning: vi.fn() } as unknown as 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useWebSearchStore.setState({ chats: {}, last: "off" });
   useChatStore.setState(
     {
       ...chatDefaults,
@@ -108,6 +110,20 @@ it("regenerates with current global naming and default tool settings when there 
     expect.objectContaining({ modelChatNamingEnabled: false, dateTimeToolEnabled: true, chartToolEnabled: true }),
   );
 });
+
+it.each([
+  ["off", false, true],
+  ["ask", true, true],
+  ["auto", true, false],
+] as const)(
+  "regenerates in a chat whose web search mode is %s with search on=%s and asking=%s",
+  async (mode, webSearchEnabled, webSearchAsk) => {
+    useWebSearchStore.setState({ chats: { chat: mode }, last: "off" });
+    const hook = renderHook(() => useRegenerateMessage({ chatId: "chat", globalInstructions: "", toast, startStream }));
+    await act(() => hook.result.current("answer", "replacement", "Replacement"));
+    expect(startStream).toHaveBeenCalledWith(expect.objectContaining({ webSearchEnabled, webSearchAsk }));
+  },
+);
 
 it.each([false, true])("regenerates on a small model with tools enabled only after opt-in=%s", async (enabled) => {
   useModelsStore.setState({

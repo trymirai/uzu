@@ -4,12 +4,17 @@ use uzu::types::{
     session::chat::{ChatReply, ChatReplyFinishReason, ChatRole},
 };
 
-use super::chart::ChartSpec;
+use super::{
+    chart::ChartSpec,
+    web_search::{PermissionRequest, SearchFailure},
+    web_source::WebSource,
+};
 
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct RunStreamPayload {
     pub run_id: String,
+    pub chat_id: String,
     pub repo_id: String,
     #[serde(default)]
     pub messages: Vec<MsgIn>,
@@ -23,6 +28,10 @@ pub struct RunStreamPayload {
     pub date_time_tool_enabled: Option<bool>,
     #[serde(default)]
     pub chart_tool_enabled: Option<bool>,
+    #[serde(default)]
+    pub web_search_enabled: Option<bool>,
+    #[serde(default)]
+    pub web_search_ask: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -37,6 +46,12 @@ pub enum SamplingDefaults {
         repetition_penalty: Option<f64>,
         suffix_repetition_length: Option<i64>,
     },
+}
+
+impl RunStreamPayload {
+    pub(super) fn asks_before_searching(&self) -> bool {
+        self.web_search_ask != Some(false)
+    }
 }
 
 impl From<SamplingMethod> for SamplingDefaults {
@@ -68,6 +83,28 @@ pub struct MsgIn {
     pub content: String,
     #[serde(default, rename = "reasoningContent")]
     pub reasoning_content: Option<String>,
+    #[serde(default, rename = "openableUrls")]
+    pub openable_urls: Vec<String>,
+    #[serde(default, rename = "readPages")]
+    pub read_pages: Vec<ReadPageIn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadPageIn {
+    pub url: String,
+    #[serde(default)]
+    pub read_from: Option<String>,
+}
+
+impl MsgIn {
+    // The addresses are not compared: the client adds them to an answer the session produced.
+    pub(super) fn is_same_turn(
+        &self,
+        held: &Self,
+    ) -> bool {
+        self.role == held.role && self.content == held.content && self.reasoning_content == held.reasoning_content
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -138,6 +175,7 @@ pub enum RunEvent {
         index: usize,
         delta: String,
     },
+    SearchPermission(PermissionRequest),
     #[serde(rename_all = "camelCase")]
     Done {
         text: String,
@@ -174,6 +212,28 @@ pub enum TranscriptItem {
         called: bool,
         #[serde(skip_serializing_if = "std::ops::Not::not")]
         failed: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    WebSearch {
+        query: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+        called: bool,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        failed: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        failure: Option<SearchFailure>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        sources: Vec<WebSource>,
+    },
+    #[serde(rename_all = "camelCase")]
+    WebPage {
+        url: String,
+        called: bool,
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        failed: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<WebSource>,
     },
 }
 
@@ -257,6 +317,8 @@ pub(super) fn test_message(
         role,
         content: content.to_string(),
         reasoning_content: reasoning.map(str::to_string),
+        openable_urls: Vec::new(),
+        read_pages: Vec::new(),
     }
 }
 
@@ -293,7 +355,7 @@ mod tests {
     #[test]
     fn omitted_tool_preferences_remain_distinct_from_explicit_choices() {
         let payload = |extra: serde_json::Value| {
-            let mut value = serde_json::json!({ "runId": "run", "repoId": "model" });
+            let mut value = serde_json::json!({ "runId": "run", "chatId": "chat", "repoId": "model" });
             value.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             serde_json::from_value::<RunStreamPayload>(value).unwrap()
         };
@@ -301,6 +363,13 @@ mod tests {
         assert_eq!(defaults.model_chat_naming_enabled, None);
         assert_eq!(defaults.date_time_tool_enabled, None);
         assert_eq!(defaults.chart_tool_enabled, None);
+        assert_eq!(defaults.web_search_enabled, None);
+        let search = payload(serde_json::json!({ "webSearchEnabled": true }));
+        assert_eq!(search.web_search_enabled, Some(true));
+        assert_eq!(search.chart_tool_enabled, None);
+        assert!(search.asks_before_searching());
+        assert!(payload(serde_json::json!({ "webSearchAsk": true })).asks_before_searching());
+        assert!(!payload(serde_json::json!({ "webSearchAsk": false })).asks_before_searching());
         for enabled in [true, false] {
             let naming = payload(serde_json::json!({ "modelChatNamingEnabled": enabled }));
             assert_eq!(naming.model_chat_naming_enabled, Some(enabled));
@@ -406,5 +475,31 @@ mod tests {
         .map(|reason| serde_json::to_value(reason).expect("json").as_str().expect("string").to_string())
         .collect();
         assert_eq!(names, ["Stop", "Length", "Cancelled", "ContextLimitReached", "ToolCalls", "Rejected"]);
+    }
+
+    #[test]
+    fn a_search_permission_request_and_its_answer_are_the_client_contract() {
+        use super::super::web_search::Decision;
+
+        let event = RunEvent::SearchPermission(PermissionRequest {
+            request_id: "run:1".into(),
+            provider: "DuckDuckGo",
+            queries: vec!["rust stable version".into()],
+            pages: Vec::new(),
+        });
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            serde_json::json!({
+                "type": "searchPermission",
+                "requestId": "run:1",
+                "provider": "DuckDuckGo",
+                "queries": ["rust stable version"],
+            })
+        );
+        for (name, decision) in
+            [("deny", Decision::Deny), ("allow", Decision::Allow), ("alwaysAllow", Decision::AlwaysAllow)]
+        {
+            assert_eq!(serde_json::from_value::<Decision>(name.into()).unwrap(), decision);
+        }
     }
 }

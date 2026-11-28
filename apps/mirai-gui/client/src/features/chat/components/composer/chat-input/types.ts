@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { WebSearchMode } from "@/types/web-search";
 
 export type ChatInputModel = {
   id: string;
@@ -22,6 +23,13 @@ export type ChatInputMoreModelsLink = {
   onClick?: () => void;
 };
 
+export type ChatInputWebSearch = {
+  mode: WebSearchMode;
+  onChange: (mode: WebSearchMode) => void;
+  available: boolean;
+  disabled?: boolean;
+};
+
 export type ChatInputProps = {
   value: string;
   onChange: (value: string) => void;
@@ -43,4 +51,5 @@ export type ChatInputProps = {
   onStop?: () => void;
   settingsModified?: boolean;
   settingsDisabled?: boolean;
+  webSearch?: ChatInputWebSearch;
 };

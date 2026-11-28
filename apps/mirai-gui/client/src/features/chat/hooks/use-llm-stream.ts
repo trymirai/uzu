@@ -20,6 +20,8 @@ export type StartStreamOptions = {
   modelChatNamingEnabled?: boolean;
   dateTimeToolEnabled?: boolean;
   chartToolEnabled?: boolean;
+  webSearchEnabled?: boolean;
+  webSearchAsk?: boolean;
   signal?: AbortSignal;
   messageId: string;
   chatId: string;
@@ -150,10 +152,13 @@ export const useLlmStream = (chatId: string) => {
 
       const llm = useChatStore.getState().runChatStream({
         repoId,
+        chatId,
         messages: options.messages,
         modelChatNamingEnabled,
         dateTimeToolEnabled: options.dateTimeToolEnabled,
         chartToolEnabled: options.chartToolEnabled,
+        webSearchEnabled: options.webSearchEnabled,
+        webSearchAsk: options.webSearchAsk,
       });
       const runId = llm.runId;
       const reader = llm.stream.getReader();
@@ -229,6 +234,11 @@ export const useLlmStream = (chatId: string) => {
         );
       });
 
+      // The store keeps the request, so its card is there again when this chat is reopened.
+      const offSearchPermission = llm.onSearchPermission((request) => {
+        if (isCurrentRun()) useChatSessionStore.getState().setSearchPermission({ ...request, chatId, messageId });
+      });
+
       setIsStreaming(true);
       setIsLoading(!hasContent);
 
@@ -242,6 +252,7 @@ export const useLlmStream = (chatId: string) => {
         offParsed();
         offChatName();
         offTranscript();
+        offSearchPermission();
         finalize(options.onDone);
       };
 
@@ -286,6 +297,7 @@ export const useLlmStream = (chatId: string) => {
       const result = await llm.result;
       offChatName();
       offTranscript();
+      offSearchPermission();
       await titleUpdates;
       // Stop pressed after leaving and reopening the chat: the stop handler saved
       // the text at that moment, and this stream kept printing after it.

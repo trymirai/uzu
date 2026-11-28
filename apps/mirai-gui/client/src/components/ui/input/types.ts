@@ -8,6 +8,7 @@ export type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "size" | "c
   size?: InputSize;
   kind?: InputKind;
   leftIcon?: ReactNode;
+  rightSlot?: ReactNode;
   fullWidth?: boolean;
 
   className?: string;

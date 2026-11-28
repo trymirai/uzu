@@ -22,6 +22,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(pro
     size = "md",
     kind = "default",
     leftIcon,
+    rightSlot,
     fullWidth = false,
     disabled = false,
     className,
@@ -59,6 +60,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(pro
         className={inputClasses}
         aria-invalid={kind === "error" || undefined}
       />
+      {rightSlot && <span className="flex shrink-0 items-center gap-1">{rightSlot}</span>}
     </div>
   );
 });

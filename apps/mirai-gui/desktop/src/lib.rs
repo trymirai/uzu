@@ -101,6 +101,11 @@ pub fn run() {
                     }
                     false
                 })
+                .on_page_load(|window, payload| {
+                    if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                        chat::cancel_runs_of_previous_page(window.app_handle());
+                    }
+                })
                 .build()?;
             #[cfg(windows)]
             {
@@ -170,6 +175,11 @@ pub fn run() {
             chat::run_stream,
             chat::title_gen,
             chat::cancel_run,
+            chat::answer_search_permission,
+            chat::web_search_keys,
+            chat::web_search_key_save,
+            chat::web_search_key_remove,
+            chat::site_icon,
             chat::cancel_title_gen,
             chat::eject_session,
             chat::set_auto_eject_config,

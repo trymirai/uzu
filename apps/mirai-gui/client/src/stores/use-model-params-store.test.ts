@@ -114,7 +114,7 @@ it.each([
       },
     ],
   });
-  useChatStore.getState().runChatStream({ repoId: "model", messages: [] });
+  useChatStore.getState().runChatStream({ repoId: "model", chatId: "chat", messages: [] });
   expect(runStream).toHaveBeenLastCalledWith(
     expect.objectContaining({
       modelChatNamingEnabled: expected,
@@ -156,8 +156,33 @@ it.each([
   useModelParamsStore.setState({
     paramsByRepoId: { model: { sampling: { type: "Default" }, chartToolEnabled: test.model } },
   });
-  useChatStore.getState().runChatStream({ repoId: "model", messages: [], chartToolEnabled: test.request });
+  useChatStore
+    .getState()
+    .runChatStream({ repoId: "model", chatId: "chat", messages: [], chartToolEnabled: test.request });
   expect(runStream).toHaveBeenLastCalledWith(expect.objectContaining({ chartToolEnabled: test.expected }));
+});
+
+it.each([
+  { supportsTools: true, request: true, expected: true },
+  { supportsTools: true, request: undefined, expected: false },
+  { supportsTools: false, request: true, expected: false },
+])("searches the web only when the chat asked for it and the model can call tools: %j", (test) => {
+  useModelsStore.setState({
+    models: [
+      {
+        repoId: "model",
+        name: "Model",
+        vendor: "Vendor",
+        kind: ModelKind.Text,
+        reasoning: { kind: "unsupported" },
+        supportsTools: test.supportsTools,
+      },
+    ],
+  });
+  useChatStore
+    .getState()
+    .runChatStream({ repoId: "model", chatId: "chat", messages: [], webSearchEnabled: test.request });
+  expect(runStream).toHaveBeenLastCalledWith(expect.objectContaining({ webSearchEnabled: test.expected }));
 });
 
 it("preserves a model's naming opt-out while the global feature is disabled and re-enabled", () => {
@@ -182,7 +207,9 @@ it.each([
     globalModelChatNamingEnabled: test.global,
     paramsByRepoId: { model: { sampling: { type: "Default" }, modelChatNamingEnabled: test.model } },
   });
-  useChatStore.getState().runChatStream({ repoId: "model", messages: [], modelChatNamingEnabled: test.request });
+  useChatStore
+    .getState()
+    .runChatStream({ repoId: "model", chatId: "chat", messages: [], modelChatNamingEnabled: test.request });
   expect(runStream).toHaveBeenLastCalledWith(expect.objectContaining({ modelChatNamingEnabled: test.expected }));
 });
 
@@ -199,7 +226,7 @@ it("uses model-default reasoning for unset parameters while retaining explicit m
     ["legacyOff", "disabled"],
     ["explicit", "high"],
   ]) {
-    useChatStore.getState().runChatStream({ repoId: repoId!, messages: [] });
+    useChatStore.getState().runChatStream({ repoId: repoId!, chatId: "chat", messages: [] });
     expect(runStream).toHaveBeenLastCalledWith(expect.objectContaining({ repoId, reasoningEffort }));
   }
   expect(isCustomParams({ sampling: { type: "Default" }, reasoningEffort: "default" }, true)).toBe(false);

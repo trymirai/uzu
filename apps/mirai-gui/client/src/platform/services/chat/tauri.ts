@@ -20,6 +20,9 @@ const tauriRunTransport: RunTransport = {
 export const tauriChat: ChatService = {
   runStream: (params: LlmRunParams) => runLlmStream(tauriRunTransport, params),
   cancelRun,
+  answerSearchPermission: (requestId, shownItems, decision) =>
+    invoke<boolean>("answer_search_permission", { requestId, shownItems, decision }),
+  siteIcon: (host) => invoke<string | null>("site_icon", { host }),
 
   generateTitle: (params: TitleGenParams) => invoke<string>("title_gen", { payload: params }),
 

@@ -32,20 +32,11 @@ vi.mock("./chat-delete-modal", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
 });
 
 afterEach(() => {
   cleanup();
   fireEvent.keyUp(window, { key: "Shift" });
-  vi.unstubAllGlobals();
 });
 
 async function openMenu() {

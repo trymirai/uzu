@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmRunParams, SessionOutputStats, TranscriptItem } from "@/types/llm-stream";
 import { runLlmStream, type RunEvent, type RunTransport } from "./run-stream";
 
-const params: LlmRunParams = { repoId: "vendor/model", messages: [{ role: "user", content: "hi" }] };
+const params: LlmRunParams = {
+  repoId: "vendor/model",
+  chatId: "chat",
+  messages: [{ role: "user", content: "hi" }],
+};
 
 const stats: SessionOutputStats = {
   prefillStats: { duration: 0.1, tokensCount: 3, tokensPerSecond: 30 },
@@ -55,6 +59,48 @@ describe("runLlmStream", () => {
     expect(listener).toHaveBeenCalledExactlyOnceWith(initial);
     await run.cancel();
     expect((await run.result).transcript).toEqual(initial);
+  });
+
+  it("hands each search permission request to the listener, the same request again when a query joins it", () => {
+    const { transport, emit } = fakeTransport();
+    const run = runLlmStream(transport, params);
+    void run.stream.getReader();
+    const listener = vi.fn();
+    run.onSearchPermission(listener);
+
+    emit({ type: "searchPermission", requestId: "run:0", provider: "DuckDuckGo", queries: ["first"] });
+    emit({ type: "searchPermission", requestId: "run:0", provider: "DuckDuckGo", queries: ["first", "second"] });
+    expect(listener.mock.calls).toEqual([
+      [{ requestId: "run:0", provider: "DuckDuckGo", queries: ["first"], pages: [] }],
+      [{ requestId: "run:0", provider: "DuckDuckGo", queries: ["first", "second"], pages: [] }],
+    ]);
+
+    const address = "https://docs.example/d/1?key=secret";
+    emit({ type: "searchPermission", requestId: "run:1", provider: "Exa", queries: [], pages: [address] });
+    expect(listener).toHaveBeenLastCalledWith({ requestId: "run:1", provider: "Exa", queries: [], pages: [address] });
+    emit({ type: "searchPermission", requestId: "run:0", provider: "DuckDuckGo", queries: ["first", "second"] });
+
+    const late = vi.fn();
+    run.onSearchPermission(late);
+    expect(late).toHaveBeenCalledExactlyOnceWith({
+      requestId: "run:0",
+      provider: "DuckDuckGo",
+      queries: ["first", "second"],
+      pages: [],
+    });
+  });
+
+  it("ends the run on both sides when a search permission request cannot be read", async () => {
+    const { transport, emit } = fakeTransport();
+    const run = runLlmStream(transport, params);
+    void run.stream.getReader();
+    const listener = vi.fn();
+    run.onSearchPermission(listener);
+
+    emit({ type: "searchPermission", requestId: "run:0", provider: "DuckDuckGo", queries: [] });
+    expect(listener).not.toHaveBeenCalled();
+    expect(transport.cancel).toHaveBeenCalledExactlyOnceWith(run.runId);
+    expect((await run.result).error).toBe("Invalid search permission request");
   });
 
   it("appends Unicode text and reasoning without changing previously published snapshots", async () => {
@@ -132,6 +178,22 @@ describe("runLlmStream", () => {
       await expect(readAll(run.stream)).rejects.toThrow("Invalid transcript delta at index 0");
       expect((await run.result).error).toBe("Invalid transcript delta at index 0");
       expect((await run.result).transcript).toEqual(initial);
+    },
+  );
+
+  it.each(["transcript", "done"] as const)(
+    "fails the run on a %s event whose transcript cannot be read",
+    async (type) => {
+      const { transport, emit } = fakeTransport();
+      const run = runLlmStream(transport, params);
+      const listener = vi.fn();
+      run.onTranscript(listener);
+      const items = [
+        { type: "webSearch", query: "rust", called: true, sources: "none" },
+      ] as unknown as TranscriptItem[];
+      emit(type === "done" ? { type, text: "Answer", stats, transcript: items } : { type, items });
+      expect(listener).not.toHaveBeenCalled();
+      expect((await run.result).error).toBe("Invalid transcript");
     },
   );
 

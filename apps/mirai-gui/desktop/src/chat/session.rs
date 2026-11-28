@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{AppHandle, Manager};
 use uzu::{
     engine::Engine,
@@ -12,7 +14,12 @@ use super::{
     ChatState, ResidentSession,
     chart::show_chart,
     naming::ChatNaming,
+    payloads::RunStreamPayload,
     session_events::{LoadingStatus, emit_session_loading, emit_session_state},
+    web_fetch::web_fetch_tool,
+    web_search::web_search_tool,
+    web_tools::WebTools,
+    web_view::WebView,
 };
 use crate::{
     engine::engine,
@@ -43,22 +50,81 @@ pub(super) fn arm_idle_timer(
     *state.idle_timer.lock().expect("idle_timer mutex poisoned") = Some(handle);
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct RequestedTools {
+    pub chat_naming: Option<bool>,
+    pub date_time: Option<bool>,
+    pub chart: Option<bool>,
+    pub web_search: Option<bool>,
+}
+
+impl RequestedTools {
+    pub(super) const ALL_OFF: Self = Self {
+        chat_naming: Some(false),
+        date_time: Some(false),
+        chart: Some(false),
+        web_search: Some(false),
+    };
+}
+
+impl From<&RunStreamPayload> for RequestedTools {
+    fn from(payload: &RunStreamPayload) -> Self {
+        Self {
+            chat_naming: payload.model_chat_naming_enabled,
+            date_time: payload.date_time_tool_enabled,
+            chart: payload.chart_tool_enabled,
+            web_search: payload.web_search_enabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct EnabledTools {
+    pub chat_naming: bool,
+    pub date_time: bool,
+    pub chart: bool,
+    pub web_search: bool,
+}
+
+impl EnabledTools {
+    fn resolve(
+        requested: RequestedTools,
+        model_size: Option<i64>,
+        settings: &serde_json::Value,
+    ) -> Self {
+        Self {
+            chat_naming: chat_naming_enabled(resolve_tool_enabled(requested.chat_naming, model_size), settings),
+            date_time: resolve_tool_enabled(requested.date_time, model_size),
+            chart: resolve_tool_enabled(requested.chart, model_size),
+            // Searching sends the query off the device, so it is never on by default.
+            web_search: requested.web_search.unwrap_or(false),
+        }
+    }
+
+    pub(super) fn any(self) -> bool {
+        self.chat_naming || self.date_time || self.chart || self.web_search
+    }
+}
+
+pub(super) struct ReadySession {
+    pub session: ChatSession,
+    pub support: ReasoningSupport,
+    pub naming: Option<ChatNaming>,
+    pub tools: EnabledTools,
+    pub web_tools: Option<Arc<WebTools>>,
+    pub identifier: String,
+}
+
 pub(super) async fn ensure_session(
     app: &AppHandle,
     state: &ChatState,
     repo_id: &str,
-    model_chat_naming_enabled: Option<bool>,
-    date_time_tool_enabled: Option<bool>,
-    chart_tool_enabled: Option<bool>,
-) -> AppResult<(ChatSession, ReasoningSupport, Option<ChatNaming>)> {
+    requested: RequestedTools,
+) -> AppResult<ReadySession> {
     let model = find_chat_model(repo_id).await?;
     let model_size = model.properties.as_ref().map(|properties| properties.size);
-    let model_chat_naming_enabled = chat_naming_enabled(
-        resolve_tool_enabled(model_chat_naming_enabled, model_size),
-        &crate::storage::settings_load()?,
-    );
-    let date_time_tool_enabled = resolve_tool_enabled(date_time_tool_enabled, model_size);
-    let chart_tool_enabled = resolve_tool_enabled(chart_tool_enabled, model_size);
+    let settings = crate::storage::settings_load()?;
+    let tools = EnabledTools::resolve(requested, model_size, &settings);
     let engine = engine().await?;
     if model.is_downloadable()
         && !matches!(engine.ready_download_state(&model).await?.phase, uzu::storage::DownloadPhase::Downloaded {})
@@ -69,42 +135,35 @@ pub(super) async fn ensure_session(
     if let Some(resident) = guard.as_ref()
         && resident.identifier == model.identifier
     {
-        if resident.model_chat_naming_enabled == model_chat_naming_enabled
-            && resident.date_time_tool_enabled == date_time_tool_enabled
-            && resident.chart_tool_enabled == chart_tool_enabled
-        {
-            return Ok((resident.session.clone(), resident.support.clone(), resident.naming.clone()));
+        if resident.tools == tools {
+            return Ok(resident.ready());
         }
         // Tools survive reset(). Drop the old KV state before creating the
         // replacement session, keeping the loaded model weights in the instance.
+        crate::logger::info(
+            "chat:session:replaced",
+            Some(serde_json::json!({ "repoId": repo_id, "reason": "toolsChanged" })),
+        );
         let resident = guard.take().expect("resident session");
         drop(resident.session);
         state.forget_history();
-        let (session, naming) = match create_session(
-            &engine,
-            &resident.instance,
-            model_chat_naming_enabled,
-            date_time_tool_enabled,
-            chart_tool_enabled,
-        )
-        .await
-        {
+        let (session, naming, web_tools) = match create_session(app, &engine, &resident.instance, tools).await {
             Ok(created) => created,
             Err(error) => {
                 emit_session_state(app, false, repo_id, false);
                 return Err(error);
             },
         };
-        let support = resident.support.clone();
-        *guard = Some(ResidentSession {
-            session: session.clone(),
-            naming: naming.clone(),
-            model_chat_naming_enabled,
-            date_time_tool_enabled,
-            chart_tool_enabled,
+        let resident = ResidentSession {
+            session,
+            naming,
+            tools,
+            web_tools,
             ..resident
-        });
-        return Ok((session, support, naming));
+        };
+        let ready = resident.ready();
+        *guard = Some(resident);
+        return Ok(ready);
     }
     let support = reasoning_support(&model);
     *guard = None;
@@ -115,32 +174,44 @@ pub(super) async fn ensure_session(
     let config = ChatConfig::create();
     let loaded = async {
         let instance = engine.chat_instance(model.clone(), config).await?;
-        let (session, naming) =
-            create_session(&engine, &instance, model_chat_naming_enabled, date_time_tool_enabled, chart_tool_enabled)
-                .await?;
-        Ok::<_, AppError>((instance, session, naming))
+        let (session, naming, web_tools) = create_session(app, &engine, &instance, tools).await?;
+        Ok::<_, AppError>((instance, session, naming, web_tools))
     }
     .await;
-    let (instance, session, naming) = match loaded {
+    let (instance, session, naming, web_tools) = match loaded {
         Ok(loaded) => loaded,
         Err(error) => {
             emit_session_loading(app, LoadingStatus::Error, repo_id, Some(error.to_string()));
             return Err(error);
         },
     };
-    *guard = Some(ResidentSession {
+    let resident = ResidentSession {
         repo_id: repo_id.to_string(),
         identifier: model.identifier.clone(),
-        session: session.clone(),
+        session,
         instance,
-        model_chat_naming_enabled,
-        date_time_tool_enabled,
-        chart_tool_enabled,
-        naming: naming.clone(),
-        support: support.clone(),
-    });
+        tools,
+        naming,
+        web_tools,
+        support,
+    };
+    let ready = resident.ready();
+    *guard = Some(resident);
     emit_session_state(app, true, repo_id, false);
-    Ok((session, support, naming))
+    Ok(ready)
+}
+
+impl ResidentSession {
+    fn ready(&self) -> ReadySession {
+        ReadySession {
+            session: self.session.clone(),
+            support: self.support.clone(),
+            naming: self.naming.clone(),
+            tools: self.tools,
+            web_tools: self.web_tools.clone(),
+            identifier: self.identifier.clone(),
+        }
+    }
 }
 
 fn resolve_tool_enabled(
@@ -158,28 +229,35 @@ fn chat_naming_enabled(
 }
 
 async fn create_session(
+    app: &AppHandle,
     engine: &Engine,
     instance: &ChatInstance,
-    model_chat_naming_enabled: bool,
-    date_time_tool_enabled: bool,
-    chart_tool_enabled: bool,
-) -> AppResult<(ChatSession, Option<ChatNaming>)> {
+    tools: EnabledTools,
+) -> AppResult<(ChatSession, Option<ChatNaming>, Option<Arc<WebTools>>)> {
     let mut session = engine.chat_with_instance(instance).await?;
     let supports_tools = session.supports_tool_calls().await;
-    if date_time_tool_enabled && supports_tools {
+    if tools.date_time && supports_tools {
         session.add_tool(get_current_date_time).await?;
     }
-    if chart_tool_enabled && supports_tools {
+    if tools.chart && supports_tools {
         session.add_tool(show_chart).await?;
     }
-    let naming = if model_chat_naming_enabled && supports_tools {
+    let web_tools = if tools.web_search && supports_tools {
+        let web_tools = WebTools::new(Some(WebView(app.clone())));
+        session.add_tool(web_search_tool(web_tools.clone())).await?;
+        session.add_tool(web_fetch_tool(web_tools.clone())).await?;
+        Some(web_tools)
+    } else {
+        None
+    };
+    let naming = if tools.chat_naming && supports_tools {
         let naming = ChatNaming::default();
         session.add_tool(naming.tool()).await?;
         Some(naming)
     } else {
         None
     };
-    Ok((session, naming))
+    Ok((session, naming, web_tools))
 }
 
 /// Returns the current date and time in UTC and the device's local time, with explicit UTC offsets.
@@ -223,6 +301,22 @@ mod tests {
         assert!(chat_naming_enabled(explicit_small_model_opt_in, &settings));
         assert!(!chat_naming_enabled(false, &settings));
         assert!(chat_naming_enabled(true, &serde_json::json!({})));
+    }
+
+    #[test]
+    fn web_search_is_off_unless_requested_even_where_other_tools_are_on_by_default() {
+        let settings = serde_json::json!({});
+        let large = Some(27_000_000_000);
+        let defaults = EnabledTools::resolve(RequestedTools::default(), large, &settings);
+        assert!(defaults.date_time && !defaults.web_search);
+        let requested = RequestedTools {
+            web_search: Some(true),
+            ..RequestedTools::ALL_OFF
+        };
+        let enabled = EnabledTools::resolve(requested, large, &settings);
+        assert!(enabled.web_search && enabled.any());
+        assert!(!(enabled.chat_naming || enabled.date_time || enabled.chart));
+        assert!(!EnabledTools::resolve(RequestedTools::ALL_OFF, large, &settings).any());
     }
 
     #[tokio::test]

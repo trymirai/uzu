@@ -46,21 +46,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   cli.getCliStatus.mockResolvedValue("installed");
   cli.installCli.mockResolvedValue("installed");
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
   useAppStore.setState(appDefaults, true);
   localStorage.clear();
 });
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
 });
 
 it("installs the CLI only on an explicit click and allows retry after cancelling the prompt", async () => {
