@@ -15,14 +15,21 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 
-use ane::w8a8::{Host, Launch, Layer, Region, Residency, Session, TOKENS, W4, W4Layout};
+use ane::w8a8::{
+    Host, Launch, Layer, Region, Residency, Rotation, Session, TOKENS, W4, W4Layout, WeightCodeLayout, WeightLayer,
+    WeightSource,
+};
 use metal::{MTLBuffer, MTLDevice, MTLResidencySet};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use program::Offloaded;
 
 use crate::{
     backends::{
-        common::{BufferRef, CommandBufferEncoding, CpuBuffer},
+        common::{
+            BufferRef, CommandBufferEncoding, CpuBuffer,
+            gpu_types::quantization::QuantizationMode,
+            kernel::matmul::{MatmulB, QuantParamsLayout, QuantizedCorrection},
+        },
         metal::{
             Metal,
             buffer::MetalBufferExt,
@@ -34,7 +41,7 @@ use crate::{
     },
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, RhtW4Layer},
+        linear::{AneWeightLayer, Linear},
         mlp::{DenseMlp, Mlp},
     },
 };
@@ -69,11 +76,17 @@ impl Ane {
         mlp: DenseMlp<Metal>,
     ) -> Box<dyn Mlp<Metal>> {
         let mlp = Arc::new(mlp);
-        if let Some((up, down)) = mlp.rht_w4()
+        if let Some((up, down)) = mlp.ane_weights()
             && let Some(layer) = self.offload(|| {
-                let (up, down) = (rht(&up), rht(&down));
+                let (Some(up), Some(down)) = (weight_layer(&up), weight_layer(&down)) else {
+                    return Ok(None);
+                };
                 // SAFETY: the immutable regions are owned by mlp on this context's device.
-                unsafe { self.session.bind_ffn(&up, &down, mlp.clone(), || new_host(context)) }
+                let Some(layer) = (unsafe { self.session.bind_ffn(&up, &down, mlp.clone(), || new_host(context)) })?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(layer))
             })
         {
             return Box::new(Offloaded {
@@ -94,11 +107,18 @@ impl Ane {
         let linear = Arc::new(linear);
         if self.projections
             && data_type == DataType::BF16
-            && let Some(rht_w4) = linear.rht_w4(None)
+            && let Some(weights) = linear.ane_weights(None)
             && let Some(layer) = self.offload(|| {
-                let weights = rht(&rht_w4);
+                let Some(weights) = weight_layer(&weights) else {
+                    return Ok(None);
+                };
                 // SAFETY: the immutable regions are owned by linear on this context's device.
-                unsafe { self.session.bind_linear(&weights, linear.clone(), || new_host(context)) }
+                let Some(layer) =
+                    (unsafe { self.session.bind_linear(&weights, linear.clone(), || new_host(context)) })?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(layer))
             })
         {
             return Box::new(Offloaded {
@@ -188,21 +208,102 @@ fn region(buffer: impl BufferRef<Backend = Metal>) -> Region {
     }
 }
 
-fn rht<'a>(layer: &'a RhtW4Layer<'_, Metal>) -> ane::w8a8::RhtW4<'a> {
-    ane::w8a8::RhtW4 {
-        w4: W4 {
-            codes: region(layer.matrix.values()),
-            scales: region(layer.scales),
-            zero_points: region(layer.zero_points),
-            scale_stride: layer.scale_stride,
-            layout: match layer.weights_layout {
-                GemmBLayout::RowMajor => W4Layout::RowMajor,
-                GemmBLayout::InterleavedRows => W4Layout::InterleavedRows,
-                GemmBLayout::MxuTiled => W4Layout::MxuTiled,
-            },
+fn weight_layer<'a>(layer: &AneWeightLayer<'a, Metal>) -> Option<WeightLayer<'a>> {
+    let MatmulB::Quantized(quantized) = layer.matrix.matmul_b() else {
+        return None;
+    };
+    if quantized.params.layout() != QuantParamsLayout::GroupOutput
+        || quantized.params.scale_strides().output_stride != 1
+    {
+        return None;
+    }
+    let scale_stride = quantized.params.scale_strides().group_stride;
+    let scale_stride = if scale_stride == 0 {
+        quantized.params.scale_shape()[1]
+    } else {
+        scale_stride
+    };
+    if scale_stride < layer.rows {
+        return None;
+    }
+    let codes = region(quantized.codes);
+    let scales = region(quantized.scales);
+    let source = match (quantized.mode, quantized.correction) {
+        (QuantizationMode::U4, QuantizedCorrection::ZeroPoints(zero_points)) => {
+            if quantized.group_size != 32 || quantized.signed_codes {
+                return None;
+            }
+            let zero_point_strides = quantized.params.zero_point_strides(quantized.mode);
+            let zero_point_stride = if zero_point_strides.group_stride == 0 {
+                quantized.params.zero_point_shape(quantized.mode)[1].checked_mul(2)?
+            } else {
+                zero_point_strides.group_stride
+            };
+            if zero_point_strides.output_stride != 1 || zero_point_stride != scale_stride {
+                return None;
+            }
+            WeightSource::W4(W4 {
+                codes,
+                scales,
+                zero_points: region(zero_points),
+                scale_stride,
+                layout: match quantized.weights_layout {
+                    GemmBLayout::RowMajor => W4Layout::RowMajor,
+                    GemmBLayout::InterleavedRows => W4Layout::InterleavedRows,
+                    GemmBLayout::MxuTiled => W4Layout::MxuTiled,
+                },
+            })
         },
-        input_signs: layer.input_signs.as_slice(),
-        output_signs: layer.output_signs.as_slice(),
+        (QuantizationMode::U8, QuantizedCorrection::Symmetric) => {
+            let layout = code_layout(quantized.weights_layout)?;
+            WeightSource::SymmetricU8 {
+                codes,
+                scales,
+                scale_stride,
+                group_size: quantized.group_size,
+                layout,
+                signed_codes: quantized.signed_codes,
+            }
+        },
+        (QuantizationMode::U2, QuantizedCorrection::Biases(biases)) => {
+            let layout = code_layout(quantized.weights_layout)?;
+            WeightSource::MlxU2ScaleBias {
+                codes,
+                scales,
+                biases: region(biases),
+                scale_stride,
+                group_size: quantized.group_size,
+                layout,
+                signed_codes: quantized.signed_codes,
+            }
+        },
+        _ => return None,
+    };
+    let input_rotation = Rotation {
+        block_size: layer.input_hadamard_size,
+        signs: layer.input_signs.as_slice(),
+    };
+    let output_rotation = match layer.output_signs {
+        Some(signs) => Some(Rotation {
+            block_size: layer.output_hadamard_size?,
+            signs: signs.as_slice(),
+        }),
+        None => None,
+    };
+    Some(WeightLayer {
+        source,
+        rows: layer.rows,
+        columns: layer.columns,
+        input_rotation,
+        output_rotation,
+    })
+}
+
+fn code_layout(layout: GemmBLayout) -> Option<WeightCodeLayout> {
+    match layout {
+        GemmBLayout::RowMajor => Some(WeightCodeLayout::RowMajor),
+        GemmBLayout::MxuTiled => Some(WeightCodeLayout::MxuTiled),
+        GemmBLayout::InterleavedRows => None,
     }
 }
 

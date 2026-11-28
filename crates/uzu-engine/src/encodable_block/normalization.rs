@@ -225,10 +225,10 @@ impl<B: Backend> Normalization<B> {
         let shortcut = shortcut.map(|shortcut| shortcut.subrange_mut(row_offset_bytes..));
         let mut output =
             command_buffer.allocate_scratch_for_shape(&[row_count, self.element_count], self.output_data_type)?;
-        let kernel = if unrotated_input && self.hadamard_factors.is_some() {
-            self.unrotated_input_kernel.as_ref().expect("unrotated input kernel was not configured")
+        let (kernel, hadamard_factors) = if unrotated_input && self.hadamard_factors.is_some() {
+            (self.unrotated_input_kernel.as_ref().expect("unrotated input kernel was not configured"), None)
         } else {
-            &self.kernel
+            (&self.kernel, self.hadamard_factors.as_deref())
         };
         kernel.encode(
             Some(input.subrange(row_offset_bytes..)),
@@ -236,7 +236,7 @@ impl<B: Backend> Normalization<B> {
             self.biases.as_ref(),
             &mut output,
             shortcut,
-            self.hadamard_factors.as_deref(),
+            hadamard_factors,
             row_count,
             self.element_count,
             self.epsilon,

@@ -243,7 +243,7 @@ Everything from model downloading to inference configuration is handled automati
 
 ### Apple Neural Engine prefill experiment
 
-Build the Metal engine in release mode with `cargo build -p uzu-engine --release --features metal,cpu`. On Metal, `Engine::new()` enables eligible ANE offload; use `Engine::with_neural_engine(false)` for a GPU-only comparison. The experiment offloads supported H32 RHT W4 projections and dense MLPs, while unsupported layouts and layers continue on the GPU. Paired prefill handles at most two chunks; other requests use the serial path.
+Build the Metal engine in release mode with `cargo build -p uzu-engine --release --features metal,cpu`. On Metal, `Engine::new()` enables eligible ANE offload; use `Engine::with_neural_engine(false)` for a GPU-only comparison. ANE offload supports H32 RHT W4, symmetric U8, and U2 scale/bias weights. Unsupported layers and short batches stay on the GPU. Supported decoders pipeline prefill in chunk pairs.
 
 You can run any example via `cargo tools example` \<**rust** | **python** | **swift** | **typescript**\> \<**chat** | **chat-cloud** | **chat-shared-instance** | **chat-structured-output** | **quick-start** | **tool-calls**\>:
 

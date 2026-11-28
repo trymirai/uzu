@@ -16,7 +16,7 @@ use crate::{
     config::weight_matrix::{AnyWeightMatrixSpec, Layout},
     data_type::DataType,
     encodable_block::{
-        linear::{Linear, LinearEncodeError, LinearInput, RhtW4Layer},
+        linear::{AneWeightLayer, Linear, LinearEncodeError, LinearInput},
         weight_matrix::{WeightMatrix, WeightMatrixError},
     },
     safetensors::{ParameterLoaderError, ParameterTree},
@@ -45,6 +45,7 @@ pub struct LinearMatmul<B: Backend> {
     output_hadamard_factors: Option<B::GlobalGpuBuffer>,
     input_dim: u32,
     output_dim: u32,
+    weights_data_type: DataType,
     output_data_type: DataType,
     prepared_activation_format: ActivationFormat,
 }
@@ -108,6 +109,7 @@ impl<B: Backend> LinearMatmul<B> {
             output_hadamard_factors,
             input_dim,
             output_dim,
+            weights_data_type,
             output_data_type,
             prepared_activation_format: ActivationFormat::Bf16,
         })
@@ -255,11 +257,25 @@ impl<B: Backend> Linear<B> for LinearMatmul<B> {
         )
     }
 
-    fn rht_w4<'a>(
+    fn ane_weights<'a>(
         &'a self,
-        fused_input_rht: Option<&'a B::GlobalGpuBuffer>,
-    ) -> Option<RhtW4Layer<'a, B>> {
-        let input_signs = fused_input_rht?;
-        RhtW4Layer::new(&self.matrix, self.biases.is_some(), input_signs, self.output_hadamard_factors.as_ref()?)
+        fused_input_rht: Option<(u32, &'a B::GlobalGpuBuffer)>,
+    ) -> Option<AneWeightLayer<'a, B>> {
+        let (input_hadamard_size, input_signs) = fused_input_rht?;
+        if !(self.input_dim as usize).is_multiple_of(input_hadamard_size as usize) {
+            return None;
+        }
+        let output_hadamard_size = self.output_hadamard_factors.as_ref().map(|_| 32);
+        AneWeightLayer::new(
+            &self.matrix,
+            self.output_dim,
+            self.input_dim,
+            self.weights_data_type,
+            self.biases.is_some(),
+            input_signs,
+            input_hadamard_size,
+            self.output_hadamard_factors.as_ref(),
+            output_hadamard_size,
+        )
     }
 }

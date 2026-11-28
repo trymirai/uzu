@@ -1,15 +1,15 @@
 use derive_more::Debug;
 use thiserror::Error;
 
+mod ane_weights;
 mod input_preparation;
 mod matmul;
 mod output_stack;
-mod rht_w4;
 
+pub use ane_weights::AneWeightLayer;
 pub use input_preparation::InputRhtParameters;
 pub use matmul::{LinearMatmul, LinearMatmulError};
 pub use output_stack::{OutputRows, OutputStack};
-pub use rht_w4::RhtW4Layer;
 
 use crate::{
     backends::common::{
@@ -86,12 +86,12 @@ pub trait Linear<B: Backend>: Send + Sync {
         false
     }
 
-    /// The layer's weights, if it is an RHT W4 projection an accelerator can restage. A layer that
-    /// applies no input signs itself takes `fused_input_signs`, those of the block that precedes it.
-    fn rht_w4<'a>(
+    /// The compact projection and its source rotations, if the accelerator can restage this layer.
+    /// A layer that takes no input rotation itself uses `fused_input_rht` from the preceding block.
+    fn ane_weights<'a>(
         &'a self,
-        _fused_input_rht: Option<&'a B::GlobalGpuBuffer>,
-    ) -> Option<RhtW4Layer<'a, B>> {
+        _fused_input_rht: Option<(u32, &'a B::GlobalGpuBuffer)>,
+    ) -> Option<AneWeightLayer<'a, B>> {
         None
     }
 }

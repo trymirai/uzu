@@ -8,7 +8,7 @@ use crate::{
     config::{clipping::ClippingBounds, mlp::dense_mlp::DenseMLPConfig},
     data_type::DataType,
     encodable_block::{
-        linear::{InputRhtParameters, Linear, LinearBlockError, RhtW4Layer},
+        linear::{AneWeightLayer, InputRhtParameters, Linear, LinearBlockError},
         mlp::{Mlp, MlpEncodeError, gate_act_mul::MlpGateActMulEncodable},
     },
     safetensors::ParameterTree,
@@ -87,12 +87,16 @@ impl<B: Backend> DenseMlp<B> {
         ))
     }
 
-    /// The up and down projections, if both are RHT W4 layers of a plain bf16 SiLU MLP.
-    pub fn rht_w4(&self) -> Option<(RhtW4Layer<'_, B>, RhtW4Layer<'_, B>)> {
+    /// The up and down projections, if both can be staged for a plain bf16 SiLU MLP.
+    pub fn ane_weights(&self) -> Option<(AneWeightLayer<'_, B>, AneWeightLayer<'_, B>)> {
         if !self.restageable {
             return None;
         }
-        Some((self.up.rht_w4(None)?, self.down.rht_w4(self.gate.input_rht())?))
+        let up = self.up.ane_weights(None)?;
+        let input_hadamard_size = self.gate.input_hadamard_size()?;
+        let input_signs = self.gate.input_rht()?;
+        let down = self.down.ane_weights(Some((input_hadamard_size, input_signs)))?;
+        Some((up, down))
     }
 }
 
