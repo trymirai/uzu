@@ -6,7 +6,10 @@ use tokenizers::Tokenizer;
 
 use crate::{
     backends::common::{Backend, Context, DeviceCapabilities, Kernels, kernel::ContextRingUpdateKernel},
-    config::{model::language_model::LanguageModelConfig, rope::AnyRoPEConfig, vision::VisionConfig},
+    config::{
+        model::language_model::LanguageModelConfig, rope::AnyRoPEConfig, stream_op::AnyStreamOpConfig,
+        vision::VisionConfig,
+    },
     data_type::DataType,
     encodable_block::{
         decoder::{Decoder, DecoderError},
@@ -56,6 +59,8 @@ pub enum EngineLoadLanguageModelError<B: Backend> {
     UnsupportedVisionPerLayerEmbedding,
     #[error("Image prefill needs multimodal RoPE in every decoder layer with RoPE")]
     UnsupportedVisionRoPE,
+    #[error("Image prefill does not support decoders with n-gram embeddings")]
+    UnsupportedVisionNGramEmbedding,
     #[error("Vision error: {0}")]
     Vision(#[from] VisionLoadError<B>),
 }
@@ -75,6 +80,17 @@ impl<B: Backend> Engine<B> {
         });
         if config.vision_config.is_some() && has_plain_rope {
             return Err(EngineLoadLanguageModelError::UnsupportedVisionRoPE);
+        }
+
+        let has_ngram_embedding = config.decoder_config.transformer_config.layer_configs.iter().any(|layer| {
+            layer
+                .prologue_configs
+                .iter()
+                .chain(&layer.epilogue_configs)
+                .any(|op| matches!(op, AnyStreamOpConfig::NGramInjectionConfig(_)))
+        });
+        if config.vision_config.is_some() && has_ngram_embedding {
+            return Err(EngineLoadLanguageModelError::UnsupportedVisionNGramEmbedding);
         }
 
         let weight_loader = ParameterLoader::new(model_path.join("model.safetensors"), &*self.context).await?;

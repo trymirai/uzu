@@ -208,4 +208,18 @@ impl<B: Backend> Decoder<B> {
             final_hidden,
         })
     }
+
+    pub fn has_ngram_embeddings(&self) -> bool {
+        self.transformer.has_ngram_embeddings()
+    }
+
+    /// See [`Transformer::prepare_ngram_rows`].
+    pub fn prepare_ngram_rows(
+        &self,
+        state: &mut TransformerState<B>,
+        token_ids: &[u32],
+        parents: Option<&[i32]>,
+    ) -> std::io::Result<()> {
+        self.transformer.prepare_ngram_rows(state, token_ids, parents)
+    }
 }

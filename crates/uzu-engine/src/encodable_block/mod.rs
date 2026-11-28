@@ -8,6 +8,7 @@ pub mod decoder;
 pub mod dflash;
 pub mod embedding;
 pub mod embedding_table;
+pub mod embedding_table_disk;
 pub mod linear;
 pub mod mixer;
 pub mod mlp;
