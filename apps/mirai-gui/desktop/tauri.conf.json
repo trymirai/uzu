@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Mirai",
-  "mainBinaryName": "Mirai",
+  "productName": "Uzu",
+  "mainBinaryName": "uzu",
   "version": "../package.json",
   "identifier": "com.mirai.tech.chat",
   "build": {
@@ -29,7 +29,10 @@
     "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
     "category": "public.app-category.productivity",
     "macOS": {
-      "files": { "Resources/Assets.car": "icons/Assets.car" },
+      "files": {
+        "Resources/Assets.car": "icons/Assets.car",
+        "Resources/en.lproj/InfoPlist.strings": "en.lproj/InfoPlist.strings"
+      },
       "signingIdentity": "-",
       "dmg": {
         "background": "dmg-background.tiff",

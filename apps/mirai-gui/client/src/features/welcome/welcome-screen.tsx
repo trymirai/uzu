@@ -18,7 +18,7 @@ const arrive = (step: number): CSSProperties => ({ animationDelay: `${step * STE
 const LEAVE_MS = 260;
 
 /**
- * The first thing a new install shows, before the app itself: the cat says hello, what Mirai is
+ * The first thing a new install shows, before the app itself: the cat says hello, what uzu is
  * in one line, and the way in. Usage data sharing is the real setting, so it can be
  * decided here or later in Settings.
  */
@@ -71,7 +71,7 @@ export function WelcomeScreen() {
           className="text-[32px] font-[620] leading-[1.1] tracking-[-0.025em] text-text-primary text-balance animate-uzu-welcome"
           style={arrive(1)}
         >
-          Welcome to Mirai
+          Welcome to Uzu
         </h1>
         <p
           className="mt-3 text-[16px] leading-[1.5] text-text-secondary text-pretty animate-uzu-welcome"

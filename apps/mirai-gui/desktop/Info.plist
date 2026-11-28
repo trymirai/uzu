@@ -5,5 +5,10 @@
 	<!-- The Liquid Glass icon in Resources/Assets.car, compiled from icons/AppIcon.icon (Icon Composer). -->
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<!-- Updated installs keep the Mirai.app folder; Finder shows the en.lproj name only while this matches it. -->
+	<key>CFBundleDisplayName</key>
+	<string>Mirai</string>
+	<key>LSHasLocalizedDisplayName</key>
+	<true/>
 </dict>
 </plist>

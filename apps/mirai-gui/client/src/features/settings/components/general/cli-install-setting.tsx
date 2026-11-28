@@ -40,7 +40,7 @@ export function CliInstallSetting() {
     <>
       <SettingRow
         title="Command line tool"
-        description="Install the mirai command to use Mirai from the terminal"
+        description="Install the mirai command to use Uzu from the terminal"
         control={
           <Button
             kind="primary"

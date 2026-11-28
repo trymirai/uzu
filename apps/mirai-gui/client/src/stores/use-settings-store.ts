@@ -84,7 +84,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       if (content === null) return "error";
       const destination = await dialogs.showSaveDialog({
         title: "Export logs",
-        defaultPath: "mirai.log",
+        defaultPath: "uzu.log",
         filters: [{ name: "Log files", extensions: ["log", "txt"] }],
       });
       if (!destination) return "cancelled";

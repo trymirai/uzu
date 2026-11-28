@@ -8,7 +8,8 @@ export function AnalyticsSetting({ enabled, onChange }: { enabled: boolean; onCh
       title="Share usage analytics"
       description={
         <>
-          Send model activity, performance measurements, OS/CPU/RAM, app versions, and a temporary session ID to Mirai.{" "}
+          Send model activity, performance measurements, OS/CPU/RAM, app versions, and a temporary session ID to Mirai
+          Labs.{" "}
           <Popover as="span">
             <PopoverButton
               type="button"
@@ -46,8 +47,8 @@ export function AnalyticsSetting({ enabled, onChange }: { enabled: boolean; onCh
                   <li>A random session ID, renewed on app restart or when analytics is re-enabled.</li>
                 </ul>
                 <p className="mt-3">
-                  Chat content, attachments, chat names, local paths, and detailed error messages are not sent. Mirai’s
-                  server also sees your connection’s IP address.
+                  Chat content, attachments, chat names, local paths, and detailed error messages are not sent. Mirai
+                  Labs’ server also sees your connection’s IP address.
                 </p>
               </div>
             </PopoverPanel>

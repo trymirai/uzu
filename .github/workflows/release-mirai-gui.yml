@@ -205,8 +205,8 @@ jobs:
           for p in "${APP_PATH}" "${APP_PATH}.tar.gz" "${APP_PATH}.tar.gz.sig"; do
             test -e "${p}" || { echo "Missing bundle artifact: ${p}" >&2; ls -la "${BUNDLE_DIR}/macos" >&2; exit 1; }
           done
-          # public.api matches ^mirai-<version>-aarch64-apple-darwin.dmg$ exactly.
-          DMG_NAME="mirai-${APP_VERSION}-aarch64-apple-darwin.dmg"
+          # public.api matches ^uzu-<version>-aarch64-apple-darwin.dmg$ exactly.
+          DMG_NAME="uzu-${APP_VERSION}-aarch64-apple-darwin.dmg"
           DMG_TARGET="${BUNDLE_DIR}/dmg/${DMG_NAME}"
           mkdir -p "${BUNDLE_DIR}/dmg"
           DMG_APP_PATH="${APP_PATH}" \
@@ -328,7 +328,7 @@ jobs:
       TAG: ${{ github.event.release.tag_name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      DMG_TARGET: mirai-${{ needs.decide.outputs.version }}-aarch64-apple-darwin.dmg
+      DMG_TARGET: uzu-${{ needs.decide.outputs.version }}-aarch64-apple-darwin.dmg
       TARGZ_NAME: mirai-${{ needs.decide.outputs.version }}.app.tar.gz
 
     steps:
