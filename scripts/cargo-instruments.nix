@@ -5,7 +5,9 @@
   pkg-config,
   cmake,
   curl,
+  libgit2,
   openssl,
+  sqlite,
   zlib,
 }:
 rustPlatform.buildRustPackage (finalAttrs: {
@@ -25,7 +27,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   checkType = "debug";
 
   nativeBuildInputs = [pkg-config cmake];
-  buildInputs = [curl openssl zlib];
+  buildInputs = [curl libgit2 openssl sqlite zlib];
 
   meta = {
     description = "Profile Rust binaries on macOS using Xcode Instruments";

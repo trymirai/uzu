@@ -12,7 +12,7 @@ LIBWEBP_SHA256="93a852c2b3efafee3723efd4636de855b46f9fe1efddd607e1f42f60fc8f2136
 NATIVE_PACKAGES=(llguidance markupsafe numpy openai-harmony pydantic-core pyyaml regex rpds-py safetensors tokenizers)
 OMLX_UNUSED_PACKAGES=(cohere-melody cryptography llguidance lxml miniaudio onnxruntime opencv-python primp psutil
     pypdfium2 scipy setproctitle tiktoken)
-export IPHONEOS_DEPLOYMENT_TARGET="26.4"
+export IPHONEOS_DEPLOYMENT_TARGET="27.0"
 
 APP_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$APP_DIR/../.." && pwd)"

@@ -221,8 +221,10 @@ struct IntegerSchedule {
         extents<int, RIGHT_GROUP_SIZE, Core::SIMDGROUP_BLOCK_M>{},
         array<int, 2>{1, int(params->leading_dimension_a)}
     );
-    auto destination =
-        op.template get_destination_cooperative_tensor<decltype(left_tensor), decltype(cooperative_right), int>();
+    auto destination = op.template get_destination_cooperative_tensor<
+        metal::remove_addrspace_t<decltype(left_tensor)>,
+        metal::remove_addrspace_t<decltype(cooperative_right)>,
+        int>();
     op.run(left_tensor, cooperative_right, destination);
     GroupProducts<Core> product;
     for_each_static_index<int(Core::TILES_M) * int(Core::TILES_N) * int(Ops::ELEMENTS_PER_THREAD)>(

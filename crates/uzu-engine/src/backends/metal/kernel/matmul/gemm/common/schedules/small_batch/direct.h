@@ -131,10 +131,18 @@ struct DirectSchedule {
         };
         return float2(decode(0), decode(1));
       };
-      using ActivationFragment =
-          uzu::matmul::GeneratedFragment<float, Core::TILES_M, K_STEPS_PER_BLOCK, Ops, decltype(activation_generator)>;
-      using WeightFragment =
-          uzu::matmul::GeneratedFragment<float, K_STEPS_PER_BLOCK, Core::TILES_N, Ops, decltype(weight_generator)>;
+      using ActivationFragment = uzu::matmul::GeneratedFragment<
+          float,
+          Core::TILES_M,
+          K_STEPS_PER_BLOCK,
+          Ops,
+          metal::remove_addrspace_t<decltype(activation_generator)>>;
+      using WeightFragment = uzu::matmul::GeneratedFragment<
+          float,
+          K_STEPS_PER_BLOCK,
+          Core::TILES_N,
+          Ops,
+          metal::remove_addrspace_t<decltype(weight_generator)>>;
       ActivationFragment activation_fragment{activation_generator};
       WeightFragment weight_fragment{weight_generator};
       uzu::matmul::fragment_mma(accumulator, activation_fragment, weight_fragment);

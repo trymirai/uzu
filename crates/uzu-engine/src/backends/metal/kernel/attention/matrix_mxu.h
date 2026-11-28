@@ -64,7 +64,7 @@ struct AttentionMatrixSoftmax {
   AccumType denominator[ROWS_PER_LANE] = {};
   AccumType value_bias[ROWS_PER_LANE] = {};
 
-  METAL_FUNC AttentionMatrixSoftmax() { output.clear(); }
+  METAL_FUNC AttentionMatrixSoftmax() thread { output.clear(); }
 
   METAL_FUNC void rescale(const threadgroup float4* slot_stats, uint blocks_in_step, uint stat_rows) thread {
     AccumType step_max[ROWS_PER_LANE] = {running_max[0], running_max[1]};

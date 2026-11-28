@@ -6,8 +6,8 @@ import generated.confidence_head;
   StructuredBuffer<BFloat16> residual_logits,
   StructuredBuffer<float> candidate_logits,
   StructuredBuffer<float> pool_features,
-  StructuredBuffer<uint> round_metadata,
-  StructuredBuffer<uint> round_valid,
+  StructuredBuffer<uint32_t> round_metadata,
+  StructuredBuffer<uint32_t> round_valid,
   StructuredBuffer<BFloat16> draft,
   StructuredBuffer<BFloat16> pool_entry_weights,
   StructuredBuffer<BFloat16> pool_entry_biases,
@@ -19,12 +19,12 @@ import generated.confidence_head;
   RWStructuredBuffer<BFloat16> nodes,
   RWStructuredBuffer<BFloat16> node_inputs,
   ConfidenceHeadParams params,
-  uint rows,
-  [[Specialize]] uint model_dim,
-  [[Specialize]] uint pool_hidden,
+  uint32_t rows,
+  [[Specialize]] uint32_t model_dim,
+  [[Specialize]] uint32_t pool_hidden,
   ThreadContext context,
-  [[Groups("rows")]] uint row,
-  [[Threads("1024")]] uint lid,
+  [[Groups("rows")]] uint32_t row,
+  [[Threads("1024")]] uint32_t lid,
 ) {
   // TODO
 }

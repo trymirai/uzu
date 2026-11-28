@@ -28,9 +28,88 @@ pub fn slang_axis_expr(
     let expr =
         rewrite_slang_method(&expr, "saturating_mul", |receiver, argument| format!("(({receiver}) * ({argument}))"));
 
-    rewrite_slang_method(&expr, "saturating_sub", |receiver, argument| {
+    let expr = rewrite_slang_method(&expr, "saturating_sub", |receiver, argument| {
         format!("(({receiver}) > ({argument}) ? ({receiver}) - ({argument}) : 0)")
-    })
+    });
+
+    rewrite_slang_if(&expr)
+}
+
+fn rewrite_slang_if(expr: &str) -> String {
+    let mut out = expr.to_string();
+    loop {
+        let Some(if_pos) = find_keyword(&out, "if") else {
+            return out;
+        };
+        let cond_start = if_pos + 2;
+        let Some(then_open_rel) = out[cond_start..].find('{') else {
+            return out;
+        };
+        let then_open = cond_start + then_open_rel;
+        let Some(then_close) = find_matching_brace(&out, then_open) else {
+            return out;
+        };
+        let after_then = out[then_close + 1..].trim_start();
+        let Some(after_else) = after_then.strip_prefix("else") else {
+            return out;
+        };
+        if after_else.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+            return out;
+        }
+        let after_else_offset = out.len() - after_else.len();
+        let Some(else_open_rel) = out[after_else_offset..].find('{') else {
+            return out;
+        };
+        let else_open = after_else_offset + else_open_rel;
+        let Some(else_close) = find_matching_brace(&out, else_open) else {
+            return out;
+        };
+
+        let cond = out[cond_start..then_open].trim();
+        let then_branch = rewrite_slang_if(out[then_open + 1..then_close].trim());
+        let else_branch = rewrite_slang_if(out[else_open + 1..else_close].trim());
+        let rewritten = format!("(({cond}) ? ({then_branch}) : ({else_branch}))");
+        out = format!("{}{}{}", &out[..if_pos], rewritten, &out[else_close + 1..]);
+    }
+}
+
+fn find_keyword(
+    s: &str,
+    kw: &str,
+) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = s[start..].find(kw) {
+        let pos = start + rel;
+        let before_ok = pos == 0 || !(bytes[pos - 1].is_ascii_alphanumeric() || bytes[pos - 1] == b'_');
+        let after = pos + kw.len();
+        let after_ok = after == bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+        if before_ok && after_ok {
+            return Some(pos);
+        }
+        start = pos + kw.len();
+    }
+    None
+}
+
+fn find_matching_brace(
+    s: &str,
+    open_pos: usize,
+) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, ch) in s[open_pos..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open_pos + offset);
+                }
+            },
+            _ => (),
+        }
+    }
+    None
 }
 
 fn rewrite_slang_method(

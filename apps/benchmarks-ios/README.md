@@ -19,7 +19,7 @@ On the Mac:
 
 On the iPhone or iPad:
 
-- iOS 26.4 or newer, Developer Mode on (Settings, Privacy & Security), and paired with the Mac: connect it once with a cable and trust the Mac.
+- iOS 27.0 or newer, Developer Mode on (Settings, Privacy & Security), and paired with the Mac: connect it once with a cable and trust the Mac.
 - The first run of the `Benchmarks` scheme from Xcode registers the device with the Mirai team and installs the app. After that, `platform-ios` launches the installed app.
 
 ## Build

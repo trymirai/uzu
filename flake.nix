@@ -67,8 +67,8 @@
         );
 
         metal-toolchain = import ./scripts/metal-toolchain.nix pkgs {
-          build = "27A266a";
-          hash = "sha256-vpSn2ZVUo5tNRgJ89KMBCmPE4JFefP70DfCarVagniU=";
+          build = "27B47";
+          hash = "sha256-5vz4xjlXt6U6BTe8UIKC/FG+DQkm4L9m272GlMKC7As=";
         };
 
         shader-slang-env = with pkgs; let
@@ -117,7 +117,7 @@
           '');
 
         hostToolchainBuildInputs = with pkgs; (lib.optionals stdenv.hostPlatform.isLinux [alsa-lib]);
-        nixToolchainBuildInputs = hostToolchainBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [apple-sdk_26]);
+        nixToolchainBuildInputs = hostToolchainBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [apple-sdk_27]);
 
         hostToolchainNativeBuildInputs = with pkgs; [cmake shader-slang-env] ++ (lib.optionals stdenv.hostPlatform.isLinux [pkg-config bindgen-env]);
         nixToolchainNativeBuildInputs = hostToolchainNativeBuildInputs ++ (with pkgs; lib.optionals stdenv.hostPlatform.isDarwin [metal-toolchain]);

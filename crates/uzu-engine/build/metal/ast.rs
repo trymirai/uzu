@@ -217,6 +217,14 @@ impl MetalArgument {
         let name = name.context("ParmVarDecl has no name")?;
 
         let c_type = desugared_qual_type.unwrap_or(qual_type);
+        // NOTE: Metal 4.1 also names the address space of the argument itself, which is always the thread's.
+        let c_type: Box<str> = c_type
+            .split_whitespace()
+            .map(|token| token.strip_suffix("thread").filter(|rest| rest.ends_with(['*', '&'])).unwrap_or(token))
+            .filter(|&token| token != "thread")
+            .collect::<Vec<_>>()
+            .join(" ")
+            .into();
 
         if argument_node.inner.len() > 1 {
             bail!("more than one annotation on argument ast node");

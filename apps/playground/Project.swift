@@ -69,7 +69,7 @@ let appTarget: Target = .target(
     destinations: [.iPhone, .iPad, .mac],
     product: .app,
     bundleId: "com.mirai.tech.playground",
-    deploymentTargets: .multiplatform(iOS: "26.4", macOS: "26.4"),
+    deploymentTargets: .multiplatform(iOS: "27.0", macOS: "27.0"),
     infoPlist: .extendingDefault(with: [
         "CFBundleShortVersionString": "$(MARKETING_VERSION)",
         "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",

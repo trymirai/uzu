@@ -57,8 +57,8 @@ impl MetalSdk {
     }
 }
 
-const METAL_STD: &str = "metal4.0";
-const METAL_MIN_OS: &str = "26.4";
+const METAL_STD: &str = "metal4.1";
+const METAL_MIN_OS: &str = "27.0";
 
 #[derive(Debug)]
 pub struct MetalToolchain {

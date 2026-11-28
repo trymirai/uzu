@@ -22,3 +22,6 @@ unit = "  "
 
 [language-server.metal-analyzer]
 command = "metal-analyzer"
+
+[language-server.metal-analyzer.config.metal-analyzer.compiler]
+extraFlags = ["-std=metal4.1"]

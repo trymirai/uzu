@@ -17,7 +17,7 @@ craneLib.buildPackage {
     ];
   };
   nativeBuildInputs = [pkgs.cmake pkgs.rustPlatform.bindgenHook metal-toolchain];
-  buildInputs = [pkgs.apple-sdk_26];
+  buildInputs = [pkgs.apple-sdk_27];
   cargoExtraArgs = "-p benchmarks-uzu";
   doCheck = false;
   doNotPostBuildInstallCargoBinaries = true;

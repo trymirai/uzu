@@ -86,14 +86,14 @@ struct Fragment {
 
   METAL_FUNC static constexpr short2 get_position(const ushort simd_lane_id) { return Ops::get_position(simd_lane_id); }
 
-  METAL_FUNC constexpr void clear() {
+  METAL_FUNC constexpr void clear() thread {
     METAL_PRAGMA_UNROLL
     for (ushort index = 0; index < NUM_FRAGS; ++index) {
       fragment_data[index] = ThreadVectorType(0);
     }
   }
 
-  METAL_FUNC constexpr thread ThreadVectorType& fragment_at(const ushort row_index, const ushort col_index) {
+  METAL_FUNC constexpr thread ThreadVectorType& fragment_at(const ushort row_index, const ushort col_index) thread {
     return fragment_data[row_index * COL_FRAGMENTS + col_index];
   }
 
@@ -102,7 +102,7 @@ struct Fragment {
       const ushort row_index,
       const ushort col_index,
       metal::bool_constant<transpose>
-  ) {
+  ) thread {
     if constexpr (transpose) {
       return fragment_at(col_index, row_index);
     } else {
@@ -110,7 +110,7 @@ struct Fragment {
     }
   }
 
-  METAL_FUNC thread ElementType* elements() { return reinterpret_cast<thread ElementType*>(fragment_data); }
+  METAL_FUNC thread ElementType* elements() thread { return reinterpret_cast<thread ElementType*>(fragment_data); }
 
   template <class Fn>
   METAL_FUNC void map(Fn fn) thread {
