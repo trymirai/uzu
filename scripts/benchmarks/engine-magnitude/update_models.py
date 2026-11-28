@@ -5,14 +5,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from update_models import catalog, upstream, write_catalog
+from update_models import catalog, gguf_catalog, upstream, write_catalog
 
 SAMPLING = ("temp", "top_k", "top_p", "min_p")
 
 
 def update():
     data = json.loads(upstream("magnitude", "inference/catalog/models.json"))
-    models = catalog(
+    models = gguf_catalog("unsloth", "LiquidAI") | catalog(
         f"{source['repository']}:{variant['format']}"
         for model in data["models"]
         if model["support"]["level"] == "supported"

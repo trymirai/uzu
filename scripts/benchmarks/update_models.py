@@ -50,6 +50,24 @@ def hub_catalog(*authors):
     )
 
 
+def gguf_catalog(*authors):
+    models = set()
+    repos = (
+        repo for author in authors for repo in hub_models(author=author, filter="gguf", **{"expand[]": "siblings"})
+    )
+    for repo in repos:
+        for file in repo["siblings"]:
+            name = Path(file["rfilename"]).name
+            if name.lower().startswith("dflash") and name.endswith(".gguf"):
+                models.add(f"{repo['id']}:{file['rfilename']}")
+            if not name.endswith(".gguf") or name.lower().startswith(("mmproj", "mtp", "dflash")):
+                continue
+            quant = re.search(r"[.-]((?:UD-)?(?:I?Q\d_[\w]+|BF16|F16|FP16|MXFP4))(?:-\d+-of-\d+)?\.gguf$", name)
+            if quant:
+                models.add(f"{repo['id']}:{quant[1]}")
+    return catalog(models)
+
+
 @cache
 def hub_revision(repository):
     with fetch(f"https://huggingface.co/api/models/{repository}/revision/main") as response:
