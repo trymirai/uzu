@@ -7,9 +7,10 @@ use crate::interactive::{
     components::{ApplicationState, InputType, Selector, SelectorItem, SelectorStyle, TextInput, TextInputFocus},
     flows::{Command, DeleteModelFlow},
     helpers::{
-        HINT_COMMANDS, HINT_DECISION_QUESTION_EXAMPLES, HINT_DECISION_QUESTION_NOTES, HINT_DECISION_QUESTION_TITLE,
-        HINT_DECISION_STATE_EXAMPLES, HINT_DECISION_STATE_NOTES, HINT_DECISION_STATE_TITLE, HINT_SEND,
-        HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, HintExample, SYMBOL_COMMAND, SYMBOL_INPUT,
+        HINT_CHAT_IMAGE, HINT_COMMANDS, HINT_DECISION_QUESTION_EXAMPLES, HINT_DECISION_QUESTION_NOTES,
+        HINT_DECISION_QUESTION_TITLE, HINT_DECISION_STATE_EXAMPLES, HINT_DECISION_STATE_NOTES,
+        HINT_DECISION_STATE_TITLE, HINT_SEND, HINT_STORAGE_DELETE, HINT_STORAGE_PAUSE_RESUME, HintExample,
+        SYMBOL_COMMAND, SYMBOL_INPUT,
     },
     sessions::decision::{is_question_mode, leave_question_mode},
     util::types_text,
@@ -155,6 +156,9 @@ fn hint_component(
         _ => {
             hints.push(HINT_SEND.to_string());
         },
+    }
+    if state.read().model_state.as_ref().is_some_and(|model_state| model_state.model.is_vision_capable()) {
+        hints.push(HINT_CHAT_IMAGE.to_string());
     }
     hints.push(HINT_COMMANDS.to_string());
     let is_decision_model = state

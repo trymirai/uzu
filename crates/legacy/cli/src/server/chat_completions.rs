@@ -35,6 +35,7 @@ use crate::{
             coerce_tool_call, insert_tools_message, oai_tool_call, parse_parameter_text, reply_tool_calls,
             to_tool_call, tool_call_result_block, tool_parameter_types, withhold_stream_text,
         },
+        content_part::{OaiContentPart, deserialize_message_content},
         error::{OaiError, OaiErrorResponse, strip_backend_prefixes},
         request_info::RequestInfo,
         request_log::RequestLog,
@@ -47,46 +48,44 @@ pub struct ChatState {
     pub prefix_cache: bool,
 }
 
-fn deserialize_message_content<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    match Option::<serde_json::Value>::deserialize(deserializer)? {
-        None => Ok(None),
-        Some(serde_json::Value::String(text)) => Ok(Some(text)),
-        Some(serde_json::Value::Array(parts)) => {
-            let mut text = String::new();
-            for part in &parts {
-                match part.get("type").and_then(serde_json::Value::as_str) {
-                    Some("text") => {
-                        text.push_str(part.get("text").and_then(serde_json::Value::as_str).unwrap_or_default());
-                    },
-                    Some(other) => {
-                        return Err(serde::de::Error::custom(format!(
-                            "unsupported message content part type: {other}"
-                        )));
-                    },
-                    None => return Err(serde::de::Error::custom("message content part is missing a type")),
-                }
-            }
-            Ok(Some(text))
-        },
-        Some(_) => Err(serde::de::Error::custom("message content must be a string or an array of content parts")),
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct OaiMessage {
     pub role: String,
     #[serde(default, deserialize_with = "deserialize_message_content")]
-    pub content: Option<String>,
+    pub content: Vec<OaiContentPart>,
     // vLLM-style reasoning channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub reasoning_content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub tool_calls: Option<Vec<OaiToolCall>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub tool_call_id: Option<String>,
+}
+
+impl OaiMessage {
+    fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|part| match part {
+                OaiContentPart::Text(text) => Some(text.as_str()),
+                OaiContentPart::Image(_) => None,
+            })
+            .collect()
+    }
+
+    fn has_image(&self) -> bool {
+        self.content.iter().any(|part| matches!(part, OaiContentPart::Image(_)))
+    }
+}
+
+#[derive(Serialize, Clone)]
+pub struct OaiReplyMessage {
+    pub role: String,
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<OaiToolCall>>,
 }
 
 #[derive(Deserialize)]
@@ -146,7 +145,7 @@ pub struct JsonSchemaFormat {
 #[derive(Serialize, Clone)]
 pub struct ChatCompletionChoice {
     pub index: u32,
-    pub message: OaiMessage,
+    pub message: OaiReplyMessage,
     pub finish_reason: String,
 }
 
@@ -245,10 +244,18 @@ fn to_chat_message(message: &OaiMessage) -> ChatMessage {
         chat_message = chat_message.with_reasoning(reasoning.clone());
     }
     if let Some(identifier) = &message.tool_call_id {
-        let result = tool_call_result_block(identifier, message.content.clone().unwrap_or_default());
+        let result = tool_call_result_block(identifier, message.text());
         chat_message = chat_message.with_block(result);
-    } else if let Some(content) = message.content.as_ref().filter(|content| !content.is_empty()) {
-        chat_message = chat_message.with_text(content.clone());
+    } else {
+        for part in &message.content {
+            chat_message = match part {
+                OaiContentPart::Text(text) if text.is_empty() => chat_message,
+                OaiContentPart::Text(text) => chat_message.with_text(text.clone()),
+                OaiContentPart::Image(url) => chat_message.with_block(ChatContentBlock::Image {
+                    url: url.clone(),
+                }),
+            };
+        }
     }
     for tool_call in message.tool_calls.iter().flatten() {
         chat_message = chat_message.with_tool_call(to_tool_call(tool_call));
@@ -315,6 +322,7 @@ pub(crate) enum MessageBuildError {
     ReasoningEffort(String),
     EnableThinking(String),
     ChatTemplateKwargs(String),
+    Content(String),
 }
 
 impl MessageBuildError {
@@ -324,6 +332,7 @@ impl MessageBuildError {
             Self::ReasoningEffort(_) => "reasoning_effort",
             Self::EnableThinking(_) => "enable_thinking",
             Self::ChatTemplateKwargs(_) => "chat_template_kwargs",
+            Self::Content(_) => "messages",
         }
     }
 
@@ -333,6 +342,7 @@ impl MessageBuildError {
             Self::ReasoningEffort(_) => "invalid_reasoning_effort",
             Self::EnableThinking(_) => "invalid_enable_thinking",
             Self::ChatTemplateKwargs(_) => "invalid_chat_template_kwargs",
+            Self::Content(_) => "invalid_content",
         }
     }
 
@@ -341,7 +351,8 @@ impl MessageBuildError {
             Self::ToolChoice(detail)
             | Self::ReasoningEffort(detail)
             | Self::EnableThinking(detail)
-            | Self::ChatTemplateKwargs(detail) => detail,
+            | Self::ChatTemplateKwargs(detail)
+            | Self::Content(detail) => detail,
         }
     }
 }
@@ -443,6 +454,13 @@ pub(crate) fn build_messages(
 ) -> Result<Vec<ChatMessage>, MessageBuildError> {
     let tools =
         choose_tools(request.tools.as_deref(), request.tool_choice.as_ref()).map_err(MessageBuildError::ToolChoice)?;
+    if let Some(message) = request.messages.iter().find(|message| message.has_image() && message.role != "user") {
+        return Err(MessageBuildError::Content(format!(
+            "image_url content parts are only supported in user messages, got role: {}",
+            message.role
+        )));
+    }
+
     let mut messages = to_chat_messages(&request.messages);
     if let Some((effort, source)) = requested_reasoning_effort(request)? {
         let fulfilled = thinking_support.fulfill_requested_effort(effort).map_err(|detail| source.error(detail))?;
@@ -907,12 +925,11 @@ async fn run_blocking(
         model,
         choices: vec![ChatCompletionChoice {
             index: 0,
-            message: OaiMessage {
+            message: OaiReplyMessage {
                 role: "assistant".to_string(),
                 content,
                 reasoning_content: reply.message.reasoning().filter(|reasoning| !reasoning.is_empty()),
                 tool_calls,
-                tool_call_id: None,
             },
             finish_reason,
         }],

@@ -53,6 +53,7 @@ bindings-types = { workspace = true, optional = true }
 bon.workspace = true
 kiban.workspace = true
 bindings.workspace = true
+base64.workspace = true
 blake3.workspace = true
 nagare-macros.workspace = true
 shoji.workspace = true
@@ -88,6 +89,9 @@ uuid = { workspace = true, features = ["js"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 keisoku.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+http.workspace = true
 
 [build-dependencies]
 napi-build = { workspace = true, optional = true }

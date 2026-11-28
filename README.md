@@ -1784,7 +1784,17 @@ The response answers each question under its name (probabilities rounded here):
 
 Compared to the TypeSafe API, the server is text only: `state`, `instructions`, and criteria are strings, and there are no `assets` or `box` questions. `model` is optional and ignored, since the loaded model answers. Errors use the same OpenAI-style body as chat completions: an invalid question is rejected with status 400 and names it, for example `"param": "questions.satisfaction"`.
 
+### Vision models
 
+With a vision model such as `trymirai/Qwen3.5-9B-M-Vision`, you can ask about one or more images in a single chat turn. In the interactive CLI, put each local path or URL on its own `@image` line, then write your question on the next line. Use Shift+Enter or Ctrl+J to insert a line break and Enter to send.
+
+```text
+@image ~/Pictures/before.jpg
+@image ~/Pictures/after.jpg
+What changed between these photos?
+```
+
+For `POST /v1/chat/completions`, use an array for the user message’s `content`. Include one `{"type":"image_url","image_url":{"url":"..."}}` part per image, using an HTTP(S) URL or a base64 data URL, followed by a `{"type":"text","text":"What changed between these photos?"}` part.
 
 ## Troubleshooting
 

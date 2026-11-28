@@ -1,3 +1,4 @@
+pub const HINT_CHAT_IMAGE: &str = "for vision models, start with @image <path or URL> on its own line";
 pub const HINT_COMMANDS: &str = "/ for commands";
 pub const HINT_SEND: &str = "enter to send, shift+enter for a new line";
 // An example input, line by line, with what it is and a note on how it's written.

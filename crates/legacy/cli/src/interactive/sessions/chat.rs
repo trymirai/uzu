@@ -9,7 +9,7 @@ use nagare::{
 use shoji::types::{
     basic::{CancelToken, SamplingSeed, ToolCall},
     model::Model,
-    session::chat::{ChatConfig, ChatMessage, ChatReplyConfig, ChatReplyStats, ChatRole},
+    session::chat::{ChatConfig, ChatContentBlock, ChatMessage, ChatReplyConfig, ChatReplyStats, ChatRole},
 };
 use uzu::engine::Engine;
 
@@ -170,6 +170,42 @@ pub async fn create_session(
     Ok(session)
 }
 
+fn parse_user_message(mut prompt: &str) -> Result<ChatMessage, &'static str> {
+    let mut message = ChatMessage::user();
+    while prompt.starts_with("@image") {
+        let end = prompt.find(['\r', '\n']).unwrap_or(prompt.len());
+        let (line, rest) = prompt.split_at(end);
+        let line = line.trim_end();
+        if line == "@image" {
+            return Err("Expected a path or URL after @image");
+        }
+        let Some(source) = line.strip_prefix("@image ") else {
+            break;
+        };
+        let source = source.trim_start();
+        let url = if let Some(path) = source.strip_prefix("~/") {
+            let home = dirs::home_dir().ok_or("Cannot resolve ~/ because the home directory is unknown")?;
+            home.join(path.trim_start_matches('/'))
+                .into_os_string()
+                .into_string()
+                .map_err(|_| "Image path is not valid UTF-8")?
+        } else {
+            source.to_owned()
+        };
+        message.content.push(ChatContentBlock::Image {
+            url,
+        });
+        let rest = rest.strip_prefix('\r').unwrap_or(rest);
+        prompt = rest.strip_prefix('\n').unwrap_or(rest);
+    }
+    if !prompt.is_empty() || message.content.is_empty() {
+        message.content.push(ChatContentBlock::Text {
+            value: prompt.to_owned(),
+        });
+    }
+    Ok(message)
+}
+
 pub async fn run_session(
     state: State<ApplicationState>,
     session: ChatSession,
@@ -205,7 +241,15 @@ pub async fn run_session(
         let system_message = ChatMessage::system().with_reasoning_effort(reasoning_effort);
         messages.push(system_message);
     };
-    messages.push(ChatMessage::user().with_text(text));
+    match parse_user_message(&text) {
+        Ok(message) => messages.push(message),
+        Err(error) => {
+            state.write().history.push(HistoryCellType::CommandResult {
+                result: error.to_owned(),
+            });
+            return;
+        },
+    }
 
     let reply_config = ChatReplyConfig::default().with_sampling_policy(state.read().preferences().sampling.policy());
     {
@@ -359,3 +403,7 @@ async fn sleep(
     tokio::time::sleep(std::time::Duration::from_secs_f64(seconds)).await;
     Ok(format!("Slept for {} seconds", seconds))
 }
+
+#[cfg(test)]
+#[path = "../../../unit/interactive/chat_test.rs"]
+mod tests;
